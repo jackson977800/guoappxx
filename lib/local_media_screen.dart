@@ -388,10 +388,23 @@ class _LocalFileRepository extends AppRepository {
     String source, {
     int page = 1,
     String query = '',
+    String category = '',
     bool force = false,
-  }) => parent.catalog(source, page: page, query: query, force: force);
+  }) => parent.catalog(
+    source,
+    page: page,
+    query: query,
+    category: category,
+    force: force,
+  );
   @override
-  Future<CatalogPage> cached(String source) => parent.cached(source);
+  Future<CatalogPage> cached(String source, {String category = ''}) =>
+      parent.cached(source, category: category);
+  @override
+  Future<List<CatalogCategory>> categories(
+    String source, {
+    bool force = false,
+  }) => parent.categories(source, force: force);
   @override
   Future<String> cover(Drama drama, {bool force = false}) =>
       parent.cover(drama, force: force);

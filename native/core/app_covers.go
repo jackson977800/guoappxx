@@ -75,6 +75,11 @@ func newNativeCoverCache(directory string, downloader *Downloader) *nativeCoverC
 }
 
 func nativeCoverReferer(downloader *Downloader, source, address string) string {
+	if source == sourceCloudFront {
+		if parsed, err := url.Parse(address); err == nil && (strings.HasSuffix(strings.ToLower(parsed.Hostname()), ".zdmhyg.cn") || strings.EqualFold(parsed.Hostname(), "pic.tuafjz.cn")) {
+			return downloader.providerBaseURL(sourceHuangguoAI) + "/"
+		}
+	}
 	if source == sourceHuangdou {
 		if parsed, err := url.Parse(address); err == nil && (strings.EqualFold(parsed.Hostname(), "tideember.cc") || strings.EqualFold(parsed.Hostname(), "xqjurgek.top")) {
 			return parsed.Scheme + "://" + parsed.Host + "/home"
@@ -89,6 +94,7 @@ func validNativeCoverURL(address *url.URL) bool {
 }
 
 func (cache *nativeCoverCache) load(ctx context.Context, drama nativeDrama, force bool) (string, error) {
+	drama.Cover = repairLegacyCoverURL(drama)
 	address, err := url.Parse(drama.Cover)
 	if err != nil || !validNativeCoverURL(address) {
 		return "", errors.New("海报地址无效")
@@ -225,11 +231,17 @@ func nativeDecodeCover(data []byte) []byte {
 	if nativeIsCoverImage(data) {
 		return data
 	}
-	if len(data) > 0 && len(data)%aes.BlockSize == 0 {
+	encrypted := data
+	if bytes.HasPrefix(encrypted, []byte("Salted__")) && len(encrypted) > 16 {
+		encrypted = encrypted[16:]
+	}
+	if len(encrypted) > 0 {
 		block, err := aes.NewCipher([]byte("f5d965df75336270"))
 		if err == nil {
-			plain := make([]byte, len(data))
-			cipher.NewCBCDecrypter(block, []byte("97b60394abc2fbe1")).CryptBlocks(plain, data)
+			plain := make([]byte, (len(encrypted)+aes.BlockSize-1)/aes.BlockSize*aes.BlockSize)
+			copy(plain, encrypted)
+			cipher.NewCBCDecrypter(block, []byte("97b60394abc2fbe1")).CryptBlocks(plain, plain)
+			plain = plain[:len(encrypted)]
 			if unpadded, err := pkcs7Unpad(plain, aes.BlockSize); err == nil {
 				plain = unpadded
 			}

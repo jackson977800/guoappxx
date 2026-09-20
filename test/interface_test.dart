@@ -93,10 +93,14 @@ void main() {
     await tester.pumpWidget(DuanjuApp(repository: repository, store: store));
     await tester.pumpAndSettle();
     for (final source in SourceSite.values) {
-      final chip = find.widgetWithText(ChoiceChip, source.name);
+      final chip = find.byKey(ValueKey('source-${source.groupId}'));
       await tester.ensureVisible(chip);
       await tester.tap(chip);
       await tester.pumpAndSettle();
+      if (source.groupId == 'huangguo') {
+        await tester.tap(find.byKey(ValueKey('entry-${source.id}')));
+        await tester.pumpAndSettle();
+      }
       if (source.id == 'huangdou') {
         expect(find.text('会员合成剧'), findsNothing);
         await tester.tap(find.text('VIP：隐藏'));
@@ -122,11 +126,6 @@ void main() {
     await tester.pumpAndSettle();
     expect(store.hideVip, isTrue);
     final hongguo = find.widgetWithText(ChoiceChip, '红果');
-    final sourceList = find.byWidgetPredicate(
-      (widget) => widget is ListView && widget.scrollDirection == Axis.horizontal,
-    );
-    await tester.drag(sourceList, const Offset(600, 0));
-    await tester.pumpAndSettle();
     await tester.ensureVisible(hongguo);
     await tester.tap(hongguo);
     await tester.pumpAndSettle();

@@ -34,7 +34,8 @@ class DeviceFixtureRepository extends AppRepository {
   @override
   Future<void> initialize() => native.initialize();
   @override
-  Future<CatalogPage> cached(String source) async => CatalogPage([]);
+  Future<CatalogPage> cached(String source, {String category = ''}) async =>
+      CatalogPage([]);
   @override
   Future<String> cover(Drama drama, {bool force = false}) =>
       native.cover(drama, force: force);
@@ -43,6 +44,7 @@ class DeviceFixtureRepository extends AppRepository {
     String source, {
     int page = 1,
     String query = '',
+    String category = '',
     bool force = false,
   }) async => CatalogPage([drama]);
   @override

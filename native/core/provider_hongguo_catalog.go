@@ -29,6 +29,28 @@ type libraryUpdateKey struct{}
 type libraryKnownKey struct{}
 
 func (downloader *Downloader) fetchHongguoAppCatalog(ctx context.Context) ([]Drama, error) {
+	return downloader.fetchHongguoAppCatalogCategory(ctx, "")
+}
+
+func (downloader *Downloader) fetchHongguoAppCatalogCategory(ctx context.Context, category string) ([]Drama, error) {
+	genres := hongguoAppGenres
+	if category != "" {
+		genres = nil
+		for _, genre := range hongguoAppGenres {
+			if genre.key == category {
+				genres = append(genres, genre)
+			}
+		}
+		if len(genres) == 0 {
+			return nil, errors.New("红果分类无效")
+		}
+	}
+	feedKey := func(key string) string {
+		if category != "" {
+			return "category:" + key
+		}
+		return key
+	}
 	client := downloader.hongguoClient()
 	client.catalogMu.Lock()
 	defer client.catalogMu.Unlock()
@@ -55,9 +77,9 @@ func (downloader *Downloader) fetchHongguoAppCatalog(ctx context.Context) ([]Dra
 		done   bool
 		pages  int
 	}
-	scans := make([]feedScan, len(hongguoAppGenres))
-	for index, genre := range hongguoAppGenres {
-		cursor := state.Feeds[genre.key]
+	scans := make([]feedScan, len(genres))
+	for index, genre := range genres {
+		cursor := state.Feeds[feedKey(genre.key)]
 		if !more && cursor.Initialized {
 			scans[index].head = true
 			scans[index].tail = cursor
@@ -71,7 +93,7 @@ func (downloader *Downloader) fetchHongguoAppCatalog(ctx context.Context) ([]Dra
 	var failures []error
 	for round := 0; round < roundLimit; round++ {
 		active := false
-		for index, genre := range hongguoAppGenres {
+		for index, genre := range genres {
 			scan := &scans[index]
 			if scan.done || !scan.head && scan.pages >= pageLimit {
 				continue
@@ -159,7 +181,7 @@ func (downloader *Downloader) fetchHongguoAppCatalog(ctx context.Context) ([]Dra
 				}
 			}
 			client.mu.Lock()
-			client.state.Feeds[genre.key] = checkpoint
+			client.state.Feeds[feedKey(genre.key)] = checkpoint
 			client.mu.Unlock()
 			reportLibraryProgress(ctx, sourceHongguo, items, nil, false)
 		}

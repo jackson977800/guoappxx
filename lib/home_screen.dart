@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'app_layout.dart';
 import 'app_bottom_navigation.dart';
 import 'core_bridge.dart';
+import 'catalog_filters.dart';
 import 'detail_screen.dart';
 import 'downloads_screen.dart';
 import 'local_store.dart';
@@ -40,6 +41,109 @@ class _HomeScreenState extends State<HomeScreen> {
   int _tab = 0;
   String _submittedQuery = '';
   bool _failedMore = false;
+  final _categorySelections = <String, String>{};
+  final _categoryOptions = <String, List<CatalogCategory>>{};
+  final _groupSources = <String, String>{};
+  bool _categoriesLoading = false;
+  String? _categoriesError;
+  int _categoryGeneration = 0;
+
+  String get _category => _categorySelections[_source.id] ?? '';
+  String get _requestCategory =>
+      _category.startsWith('local:') ? '' : _category;
+  List<SourceGroup> get _sourceGroups =>
+      SourceGroup.fromSources(widget.store.sources);
+  List<CatalogCategory> get _categories {
+    final remote = _categoryOptions[_source.id] ?? const [CatalogCategory.all];
+    if (remote.length > 1) return remote;
+    final names =
+        _items
+            .map((item) => item.category.trim())
+            .where((name) => name.isNotEmpty)
+            .toSet()
+            .toList()
+          ..sort();
+    return [
+      CatalogCategory.all,
+      for (final name in names)
+        CatalogCategory('local:$name', name, local: true),
+    ];
+  }
+
+  Future<void> _loadCategories({bool force = false}) async {
+    final generation = ++_categoryGeneration;
+    final source = _source.id;
+    setState(() {
+      _categoriesLoading = true;
+      _categoriesError = null;
+    });
+    try {
+      final categories = await widget.repository.categories(
+        source,
+        force: force,
+      );
+      if (!mounted ||
+          generation != _categoryGeneration ||
+          source != _source.id) {
+        return;
+      }
+      setState(() {
+        _categoryOptions[source] = [
+          CatalogCategory.all,
+          ...categories.where((entry) => entry.id.isNotEmpty),
+        ];
+        _categoriesLoading = false;
+      });
+      if (_category.isNotEmpty &&
+          !_category.startsWith('local:') &&
+          !_categories.any((entry) => entry.id == _category)) {
+        _changeCategory('');
+      }
+    } catch (error) {
+      if (mounted &&
+          generation == _categoryGeneration &&
+          source == _source.id) {
+        setState(() {
+          _categoriesLoading = false;
+          _categoriesError = error.toString();
+        });
+      }
+    }
+  }
+
+  Future<void> _refreshCatalog() async {
+    await Future.wait([_loadCategories(force: true), _load(force: true)]);
+  }
+
+  void _changeGroup(SourceGroup group) {
+    if (_source.groupId == group.id) return;
+    final previous = _groupSources[group.id];
+    _changeSource(
+      group.sources.where((entry) => entry.id == previous).firstOrNull ??
+          group.sources.first,
+    );
+  }
+
+  void _changeCategory(String category) {
+    if (_category == category) return;
+    final before = _requestCategory;
+    final hadSearch = _source.onlineSearch && _search.text.isNotEmpty;
+    setState(() {
+      _categorySelections[_source.id] = category;
+      if (hadSearch) {
+        _search.clear();
+        _submittedQuery = '';
+      }
+      if (before != _requestCategory || hadSearch) {
+        _items = [];
+        _hasMore = true;
+        _page = 1;
+        _error = null;
+      }
+    });
+    if (_scroll.hasClients) _scroll.jumpTo(0);
+    if (before != _requestCategory || hadSearch) _load(useCache: true);
+  }
 
   Future<void> _manageSources() async {
     await Navigator.push<void>(
@@ -56,7 +160,10 @@ class _HomeScreenState extends State<HomeScreen> {
     final source = _source.id;
     final generation = ++_generation;
     try {
-      final cached = await widget.repository.cached(source);
+      final cached = await widget.repository.cached(
+        source,
+        category: _requestCategory,
+      );
       if (!mounted || generation != _generation || source != _source.id) return;
       setState(() {
         if (cached.items.isNotEmpty) {
@@ -145,8 +252,10 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _source = SourceSite.byId(widget.store.source);
+    _groupSources[_source.groupId] = _source.id;
     if (widget.store.sources.isNotEmpty) {
       _load(useCache: true);
+      _loadCategories();
     } else {
       _loading = false;
     }
@@ -155,6 +264,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _generation++;
+    _categoryGeneration++;
     _debounce?.cancel();
     _search.dispose();
     _scroll.dispose();
@@ -171,6 +281,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     final generation = ++_generation;
     final source = _source;
+    final category = _requestCategory;
     final query = source.onlineSearch ? _search.text.trim() : '';
     final page = more ? _page + 1 : 1;
     setState(() {
@@ -188,7 +299,10 @@ class _HomeScreenState extends State<HomeScreen> {
     });
     if (useCache && !force && query.isEmpty) {
       try {
-        final cached = await widget.repository.cached(source.id);
+        final cached = await widget.repository.cached(
+          source.id,
+          category: category,
+        );
         if (!mounted || generation != _generation) {
           return;
         }
@@ -211,6 +325,7 @@ class _HomeScreenState extends State<HomeScreen> {
         source.id,
         page: page,
         query: query,
+        category: category,
         force: force,
       );
       if (!mounted || generation != _generation) {
@@ -255,6 +370,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _search.clear();
     setState(() {
       _source = source;
+      _groupSources[source.groupId] = source.id;
       _items = [];
       _hasMore = true;
       _page = 1;
@@ -266,6 +382,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _scroll.jumpTo(0);
     }
     _load(useCache: true);
+    _loadCategories();
   }
 
   void _searchChanged(String query) {
@@ -295,6 +412,10 @@ class _HomeScreenState extends State<HomeScreen> {
     final query = _search.text.trim().toLowerCase();
     return _items.where((drama) {
       if (!widget.store.allowsSource(drama.source)) return false;
+      if (_category.startsWith('local:') &&
+          drama.category.trim() != _category.substring(6)) {
+        return false;
+      }
       if (_hideVip && drama.vip) {
         return false;
       }
@@ -333,11 +454,11 @@ class _HomeScreenState extends State<HomeScreen> {
               if (_tab == 0)
                 RefreshAction(
                   key: const ValueKey('catalog-refresh'),
-                  loading: _loading || _loadingMore,
+                  loading: _loading || _loadingMore || _categoriesLoading,
                   tooltip: '更新当前站源',
                   onPressed: widget.store.sources.isEmpty
                       ? null
-                      : () => _load(force: true),
+                      : _refreshCatalog,
                 ),
               PopupMenuButton<String>(
                 tooltip: '更多',
@@ -541,28 +662,16 @@ class _HomeScreenState extends State<HomeScreen> {
         if (television)
           Padding(
             padding: const EdgeInsets.fromLTRB(18, 8, 18, 0),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  for (final source in widget.store.sources)
-                    RemoteButton(
-                      key: ValueKey('tv-source-${source.id}'),
-                      label: source.name,
-                      selected: source.id == _source.id,
-                      onPressed: () => _changeSource(source),
-                    ),
-                  const SizedBox(width: 12),
-                  RemoteButton(
-                    label: '搜索',
-                    icon: Icons.search_rounded,
-                    onPressed: _televisionSearch,
-                  ),
-                ],
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: RemoteButton(
+                label: '搜索',
+                icon: Icons.search_rounded,
+                onPressed: _televisionSearch,
               ),
             ),
           )
-        else ...[
+        else
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
             child: SearchInput(
@@ -583,27 +692,18 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
           ),
-          SizedBox(
-            height: 64,
-            child: ListView.separated(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              scrollDirection: Axis.horizontal,
-              itemCount: widget.store.sources.length,
-              separatorBuilder: (_, index) => const SizedBox(width: 8),
-              itemBuilder: (_, index) {
-                final source = widget.store.sources[index];
-                return Center(
-                  child: ChoiceChip(
-                    label: Text(source.name),
-                    selected: source.id == _source.id,
-                    showCheckmark: false,
-                    onSelected: (_) => _changeSource(source),
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
+        CatalogFilters(
+          groups: _sourceGroups,
+          source: _source,
+          categories: _categories,
+          category: _category,
+          loading: _categoriesLoading,
+          error: _categoriesError,
+          onGroup: _changeGroup,
+          onSource: _changeSource,
+          onCategory: _changeCategory,
+          onRetry: () => _loadCategories(force: true),
+        ),
         Padding(
           padding: const EdgeInsets.fromLTRB(18, 0, 12, 8),
           child: Row(
@@ -742,7 +842,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     }
                     final padding = constraints.maxWidth < 600 ? 16.0 : 24.0;
                     return RefreshIndicator(
-                      onRefresh: () => _load(force: true),
+                      onRefresh: _refreshCatalog,
                       child: CustomScrollView(
                         controller: _scroll,
                         physics: const AlwaysScrollableScrollPhysics(),

@@ -61,6 +61,10 @@ class AppFailure implements Exception {
 }
 
 abstract class AppRepository {
+  Future<List<CatalogCategory>> categories(
+    String source, {
+    bool force = false,
+  }) async => const [CatalogCategory.all];
   bool get supportsSourceManagement => false;
   Future<SourceStatus> sourceStatus(String source) async =>
       SourceStatus.fromJson({'source': source});
@@ -98,9 +102,10 @@ abstract class AppRepository {
     String source, {
     int page = 1,
     String query = '',
+    String category = '',
     bool force = false,
   });
-  Future<CatalogPage> cached(String source);
+  Future<CatalogPage> cached(String source, {String category = ''});
   Future<String> cover(Drama drama, {bool force = false});
   Future<DramaDetail> detail(Drama drama);
   Future<PlaybackPlan> resolve(Drama drama, Episode episode, {int quality = 0});
@@ -225,6 +230,7 @@ class NativeRepository extends AppRepository {
       if ({
         'catalog',
         'cached',
+        'categories',
         'sourceStatus',
         'sourceJob',
         'cancelSourceJob',
@@ -302,10 +308,27 @@ class NativeRepository extends AppRepository {
   }
 
   @override
+  Future<List<CatalogCategory>> categories(
+    String source, {
+    bool force = false,
+  }) async {
+    final result = await _call({
+      'action': 'categories',
+      'source': source,
+      'force': force,
+    });
+    return [
+      for (final row in result['items'] as List? ?? const [])
+        CatalogCategory.fromJson(Map<String, dynamic>.from(row as Map)),
+    ];
+  }
+
+  @override
   Future<CatalogPage> catalog(
     String source, {
     int page = 1,
     String query = '',
+    String category = '',
     bool force = false,
   }) async => CatalogPage.fromJson(
     await _call({
@@ -313,12 +336,19 @@ class NativeRepository extends AppRepository {
       'source': source,
       'page': page,
       'query': query,
+      'category': category,
       'force': force,
     }),
   );
   @override
-  Future<CatalogPage> cached(String source) async =>
-      CatalogPage.fromJson(await _call({'action': 'cached', 'source': source}));
+  Future<CatalogPage> cached(String source, {String category = ''}) async =>
+      CatalogPage.fromJson(
+        await _call({
+          'action': 'cached',
+          'source': source,
+          'category': category,
+        }),
+      );
   @override
   Future<String> cover(Drama drama, {bool force = false}) async {
     final result = await _call({

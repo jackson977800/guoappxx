@@ -37,7 +37,7 @@ func nativeDownloadAvailable(job nativeDownloadJob) bool {
 
 func nativeAuthorizeInput(input nativeInput) error {
 	switch input.Action {
-	case "catalog", "cached", "sourceStatus", "sourceJob", "cancelSourceJob":
+	case "catalog", "cached", "categories", "sourceStatus", "sourceJob", "cancelSourceJob":
 		if !nativeSourceAvailable(input.Source) {
 			return errNativeBuildSource
 		}

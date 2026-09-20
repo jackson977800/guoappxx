@@ -85,6 +85,7 @@ type nativeInput struct {
 	Source    string                  `json:"source"`
 	Page      int                     `json:"page"`
 	Query     string                  `json:"query"`
+	Category  string                  `json:"category"`
 	Drama     nativeDrama             `json:"drama"`
 	Chapter   Chapter                 `json:"chapter"`
 	Index     int                     `json:"index"`
@@ -123,6 +124,7 @@ type nativeEngine struct {
 	mu               sync.Mutex
 	catalogs         map[string][]nativeDrama
 	catalogStates    map[string]nativeCatalogState
+	categoryOptions  map[string][]nativeCategory
 	covers           *nativeCoverCache
 	stream           *nativeStreamServer
 	playbacks        map[string]nativePlaybackChoice
@@ -207,7 +209,8 @@ func newNativeEngine(directory string) (*nativeEngine, error) {
 	transport.MaxIdleConnsPerHost = 8
 	transport.ResponseHeaderTimeout = 20 * time.Second
 	transport.Proxy = router.proxy
-	d.client = &http.Client{Transport: newHuangguoBrowserTransport(transport, d), Timeout: 45 * time.Second,
+	cdn := newCDNTransport(transport, newDNSResolver(transport))
+	d.client = &http.Client{Transport: newHuangguoBrowserTransport(cdn, d), Timeout: 45 * time.Second,
 		CheckRedirect: func(request *http.Request, via []*http.Request) error {
 			if len(via) >= 10 {
 				return errors.New("站源重定向次数过多")
@@ -292,7 +295,7 @@ func nativeDispatch(input nativeInput) (any, error) {
 			nativeState.engine = engine
 		}
 		nativeState.Unlock()
-		return map[string]any{"version": "0.2.4", "standalone": true, "allSources": buildAllSources == "true"}, nil
+		return map[string]any{"version": "0.2.5", "standalone": true, "allSources": buildAllSources == "true"}, nil
 	}
 	engine := nativeState.engine
 	nativeState.Unlock()
@@ -335,7 +338,13 @@ func nativeDispatch(input nativeInput) (any, error) {
 	case "catalog":
 		return engine.nativeCatalog(ctx, input)
 	case "cached":
-		return engine.nativeCached(input.Source), nil
+		if !validNativeCategory(canonicalProviderSource(input.Source), input.Category) {
+			return nil, errors.New("内容分类无效")
+		}
+		return engine.nativeCached(nativeCatalogKey(input.Source, input.Category)), nil
+	case "categories":
+		items, err := engine.nativeCategories(ctx, input.Source, input.Force)
+		return map[string]any{"items": items}, err
 	case "sourceStatus":
 		return engine.sourceStatus(input.Source), nil
 	case "sourceJob":
@@ -373,6 +382,11 @@ func (engine *nativeEngine) nativeCatalog(ctx context.Context, input nativeInput
 	if !isHuangguoProviderSource(source) {
 		return nativeCatalogResult{}, errors.New("请选择有效站源")
 	}
+	category := strings.TrimSpace(input.Category)
+	if !validNativeCategory(source, category) {
+		return nativeCatalogResult{}, errors.New("内容分类无效")
+	}
+	cacheKey := nativeCatalogKey(source, category)
 	unlock, lockErr := engine.lockSourceCatalog(ctx, source)
 	if lockErr != nil {
 		return nativeCatalogResult{}, lockErr
@@ -384,7 +398,7 @@ func (engine *nativeEngine) nativeCatalog(ctx context.Context, input nativeInput
 	page := max(1, min(input.Page, 500))
 	query := strings.TrimSpace(input.Query)
 	if query == "" && page == 1 && !input.Force {
-		if cached := engine.nativeCached(source); cached.Fresh {
+		if cached := engine.nativeCached(cacheKey); cached.Fresh {
 			return cached, nil
 		}
 	}
@@ -419,9 +433,13 @@ func (engine *nativeEngine) nativeCatalog(ctx context.Context, input nativeInput
 		if page > 1 {
 			ctx = context.WithValue(ctx, libraryMoreKey{}, true)
 		}
-		items, err = d.fetchHongguoAppCatalog(ctx)
-		result.HasMore = hongguoCatalogHasMore(d.hongguoCatalogSnapshot())
-		if len(items) == 0 && err != nil && ctx.Err() == nil {
+		items, err = d.fetchHongguoAppCatalogCategory(ctx, category)
+		state := d.hongguoCatalogSnapshot()
+		result.HasMore = hongguoCatalogHasMore(state)
+		if category != "" && state != nil {
+			result.HasMore = !state.Feeds["category:"+category].Exhausted
+		}
+		if len(items) == 0 && err != nil && ctx.Err() == nil && (category == "" || category == "short_play") {
 			var totalPages int
 			items, totalPages, err = d.fetchHongguoCategoryPage(ctx, "real-drama?page="+strconv.Itoa(page), "真人剧")
 			result.HasMore = page < totalPages
@@ -440,22 +458,12 @@ func (engine *nativeEngine) nativeCatalog(ctx context.Context, input nativeInput
 			result.HasMore = len(rows) >= 30
 		}
 	case sourceHuangguoAI:
-		address := fmt.Sprintf("%s/api/videos/category/ai-duanju?sort=hot&page=%d&size=24", d.providerBaseURL(source), page)
-		var body string
-		body, err = d.fetchProviderText(ctx, address, d.providerBaseURL(source)+"/")
-		if err == nil {
-			items = parseHuangguoAIJSONCards([]byte(body), address, "AI短剧")
-		}
-		if len(items) == 0 && page == 1 {
-			address = d.providerBaseURL(source) + "/"
-			body, err = d.fetchProviderText(ctx, address, address)
-			if err == nil {
-				items = parseHuangguoAIDramaCards(body, address, "推荐")
-			}
-		}
-		result.HasMore = len(items) >= 24
+		items, result.HasMore, err = d.fetchHuangguoAICatalogPage(ctx, page, category)
 	case sourceHuangguoVideo:
 		address := fmt.Sprintf("%s/videos?page=%d", d.providerBaseURL(source), page)
+		if category != "" {
+			address += "&category=" + url.QueryEscape(category)
+		}
 		var body string
 		body, err = d.fetchProviderText(ctx, address, d.providerBaseURL(source)+"/")
 		if err == nil {
@@ -463,7 +471,7 @@ func (engine *nativeEngine) nativeCatalog(ctx context.Context, input nativeInput
 		}
 		result.HasMore = len(items) >= 20
 	case sourceCloudFront:
-		items, result.HasMore, err = d.fetchLegacyCatalogPage(ctx, page)
+		items, result.HasMore, err = d.fetchLegacyCatalogCategoryPage(ctx, page, category)
 	}
 	if err != nil && len(items) == 0 {
 		return result, err
@@ -482,7 +490,7 @@ func (engine *nativeEngine) nativeCatalog(ctx context.Context, input nativeInput
 		seen[drama.ID] = true
 		result.Items = append(result.Items, nativeNormalize(drama))
 	}
-	engine.saveCatalogCache(source, &result)
+	engine.saveCatalogCache(cacheKey, &result)
 	return result, nil
 }
 

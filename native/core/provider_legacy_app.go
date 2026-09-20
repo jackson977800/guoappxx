@@ -11,6 +11,10 @@ import (
 )
 
 func (d *Downloader) fetchLegacyCatalogPage(ctx context.Context, page int) ([]Drama, bool, error) {
+	return d.fetchLegacyCatalogCategoryPage(ctx, page, "")
+}
+
+func (d *Downloader) fetchLegacyCatalogCategoryPage(ctx context.Context, page int, category string) ([]Drama, bool, error) {
 	var tabs legacyTabList
 	if err := d.fetchAPI(ctx, "/api/app/playlet-tab/all", nil, &tabs); err != nil {
 		return nil, false, err
@@ -24,7 +28,7 @@ func (d *Downloader) fetchLegacyCatalogPage(ctx context.Context, page int) ([]Dr
 	var failures []error
 	hasMore := false
 	for _, tab := range tabs {
-		if tab.ID == "" {
+		if tab.ID == "" || category != "" && category != tab.ID {
 			continue
 		}
 		var result listResponse
@@ -49,13 +53,22 @@ func (d *Downloader) fetchLegacyCatalogPage(ctx context.Context, page int) ([]Dr
 			drama.ID = providerDramaID(sourceCloudFront, drama.SourceID)
 			drama.ChannelName = tab.Name
 			drama.CategoryName = firstNonEmpty(drama.CategoryName, drama.CategoryNameSnake, drama.Category, tab.Name)
-			for _, cover := range []any{drama.Cover, drama.CoverURL, drama.CoverURLSnake, drama.Image, drama.Pic} {
-				if path := coverPathFromAny(cover); path != "" {
-					drama.Cover = resolveProviderURL(firstNonEmpty(d.cfg.CDNURL, defaultCDNURL)+"/", path)
+			for _, cover := range []any{drama.CoverURL, drama.CoverURLSnake, drama.Cover, drama.ImageURL, drama.ImageURLSnake, drama.Image, drama.Img, drama.Pic, drama.Picture, drama.Poster, drama.Thumb, drama.Thumbnail} {
+				if address := legacyCoverURL(cover); address != "" {
+					drama.Cover, drama.CoverURL = address, address
 					break
 				}
 			}
 			items = append(items, drama)
+		}
+	}
+	if category != "" {
+		found := false
+		for _, tab := range tabs {
+			found = found || tab.ID == category
+		}
+		if !found {
+			return nil, false, errors.New("此分类已调整，请刷新分类列表")
 		}
 	}
 	return items, hasMore, errors.Join(failures...)

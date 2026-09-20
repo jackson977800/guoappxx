@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -17,9 +18,10 @@ type nativeCatalogState struct {
 }
 
 type nativeCatalogDisk struct {
-	Version  int                           `json:"version"`
-	Catalogs map[string][]nativeDrama      `json:"catalogs"`
-	States   map[string]nativeCatalogState `json:"states"`
+	Version    int                           `json:"version"`
+	Catalogs   map[string][]nativeDrama      `json:"catalogs"`
+	States     map[string]nativeCatalogState `json:"states"`
+	Categories map[string][]nativeCategory   `json:"categories,omitempty"`
 }
 
 func (engine *nativeEngine) loadCatalogCache() {
@@ -40,6 +42,7 @@ func (engine *nativeEngine) loadCatalogCache() {
 		if disk.States != nil {
 			engine.catalogStates = disk.States
 		}
+		engine.categoryOptions = disk.Categories
 		return
 	}
 	var legacy map[string][]nativeDrama
@@ -53,6 +56,9 @@ func (engine *nativeEngine) nativeCached(source string) nativeCatalogResult {
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
 	items := append([]nativeDrama{}, engine.catalogs[source]...)
+	for index := range items {
+		items[index].Cover = repairLegacyCoverURL(items[index])
+	}
 	state, found := engine.catalogStates[source]
 	age := time.Since(state.UpdatedAt)
 	return nativeCatalogResult{
@@ -148,7 +154,15 @@ func (engine *nativeEngine) saveCatalogCache(source string, result *nativeCatalo
 		result.Fresh = true
 	}
 	engine.catalogStates[source] = state
-	body, err := json.Marshal(nativeCatalogDisk{Version: 2, Catalogs: engine.catalogs, States: engine.catalogStates})
+	if base, _, categorized := strings.Cut(source, "|"); categorized {
+		merged := mergeNativeCatalog(engine.catalogs[base], items)
+		engine.catalogs[base] = merged[:min(len(merged), 6000)]
+	}
+	engine.writeCatalogDiskLocked()
+}
+
+func (engine *nativeEngine) writeCatalogDiskLocked() {
+	body, err := json.Marshal(nativeCatalogDisk{Version: 2, Catalogs: engine.catalogs, States: engine.catalogStates, Categories: engine.categoryOptions})
 	if err != nil || len(body) > 32<<20 {
 		return
 	}

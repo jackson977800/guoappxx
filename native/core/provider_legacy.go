@@ -244,7 +244,7 @@ func (d *Downloader) legacyRequest(ctx context.Context, method, apiPath string, 
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			lastErr = d.catalogResponseError(req, resp, body)
-			if resp.StatusCode >= 500 || resp.StatusCode == http.StatusNotFound {
+			if resp.StatusCode >= 500 {
 				d.resetAPIEndpoint(base)
 				continue
 			}
