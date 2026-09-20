@@ -29,7 +29,7 @@ func newCDNTransport(base *http.Transport, resolver *dnsResolver) *cdnTransport 
 }
 
 func (transport *cdnTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	if request.URL.Scheme != "https" || !protectedCDNHost(request.URL.Hostname()) || (request.Method != http.MethodGet && request.Method != http.MethodHead) {
+	if request.URL.Scheme != "https" || (!protectedCDNHost(request.URL.Hostname()) && request.Context().Value(nativeCoverNetworkKey{}) != true) || (request.Method != http.MethodGet && request.Method != http.MethodHead) {
 		return transport.base.RoundTrip(request)
 	}
 	var proxyURL *url.URL
@@ -92,7 +92,7 @@ func (transport *cdnTransport) RoundTrip(request *http.Request) (*http.Response,
 			lastErr = err
 		}
 	}
-	return nil, fmt.Errorf("黄果 CDN %s 连接失败（已尝试备用 DNS 地址）: %w", request.URL.Hostname(), publicError(lastErr))
+	return nil, fmt.Errorf("资源 %s 连接失败（已尝试备用 DNS 地址）: %w", request.URL.Hostname(), publicError(lastErr))
 }
 
 func (transport *cdnTransport) roundTripAddress(request *http.Request, proxyURL *url.URL, routeKey, address string) (*http.Response, error) {

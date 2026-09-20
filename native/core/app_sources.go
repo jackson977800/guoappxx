@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -288,7 +289,17 @@ func (engine *nativeEngine) updateSource(ctx context.Context, source, operation 
 			fresh := result.(map[string]any)["drama"].(nativeDrama)
 			engine.mu.Lock()
 			engine.catalogs[source] = mergeNativeCatalog(engine.catalogs[source], []nativeDrama{fresh})
-			body, marshalErr := json.Marshal(nativeCatalogDisk{Version: 2, Catalogs: engine.catalogs, States: engine.catalogStates})
+			for key, items := range engine.catalogs {
+				if !strings.HasPrefix(key, source+"|") {
+					continue
+				}
+				for index := range items {
+					if items[index].ID == fresh.ID {
+						items[index] = mergeNativeDrama(items[index], fresh)
+					}
+				}
+			}
+			body, marshalErr := json.Marshal(nativeCatalogDisk{Version: 2, Catalogs: engine.catalogs, States: engine.catalogStates, Categories: engine.categoryOptions})
 			if marshalErr == nil {
 				err = writeNativeCacheFile(filepath.Join(engine.directory, "catalogs.json"), body)
 			}

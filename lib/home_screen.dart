@@ -7,6 +7,8 @@ import 'app_layout.dart';
 import 'app_bottom_navigation.dart';
 import 'core_bridge.dart';
 import 'catalog_filters.dart';
+import 'catalog_browser.dart';
+import 'rankings_screen.dart';
 import 'detail_screen.dart';
 import 'downloads_screen.dart';
 import 'local_store.dart';
@@ -36,113 +38,109 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _loadingMore = false;
   bool _hasMore = true;
   String? _error;
-  int _page = 1;
   int _generation = 0;
   int _tab = 0;
   String _submittedQuery = '';
   bool _failedMore = false;
   final _categorySelections = <String, String>{};
-  final _categoryOptions = <String, List<CatalogCategory>>{};
-  final _groupSources = <String, String>{};
+  late final CatalogBrowser _browser;
+  bool _searchVisible = false;
   bool _categoriesLoading = false;
   String? _categoriesError;
   int _categoryGeneration = 0;
 
-  String get _category => _categorySelections[_source.id] ?? '';
-  String get _requestCategory =>
-      _category.startsWith('local:') ? '' : _category;
   List<SourceGroup> get _sourceGroups =>
       SourceGroup.fromSources(widget.store.sources);
-  List<CatalogCategory> get _categories {
-    final remote = _categoryOptions[_source.id] ?? const [CatalogCategory.all];
-    if (remote.length > 1) return remote;
-    final names =
-        _items
-            .map((item) => item.category.trim())
-            .where((name) => name.isNotEmpty)
-            .toSet()
-            .toList()
-          ..sort();
-    return [
-      CatalogCategory.all,
-      for (final name in names)
-        CatalogCategory('local:$name', name, local: true),
-    ];
-  }
+  SourceGroup get _group =>
+      _sourceGroups.where((group) => group.id == _source.groupId).firstOrNull ??
+      SourceGroup(_source.groupId, _source.groupName, [_source]);
+  String get _category => _categorySelections[_group.id] ?? '';
+  List<CatalogCategory> get _categories => _browser.categories(_group);
 
   Future<void> _loadCategories({bool force = false}) async {
     final generation = ++_categoryGeneration;
-    final source = _source.id;
+    final group = _group;
     setState(() {
       _categoriesLoading = true;
       _categoriesError = null;
     });
-    try {
-      final categories = await widget.repository.categories(
-        source,
-        force: force,
-      );
-      if (!mounted ||
-          generation != _categoryGeneration ||
-          source != _source.id) {
-        return;
-      }
-      setState(() {
-        _categoryOptions[source] = [
-          CatalogCategory.all,
-          ...categories.where((entry) => entry.id.isNotEmpty),
-        ];
-        _categoriesLoading = false;
-      });
-      if (_category.isNotEmpty &&
-          !_category.startsWith('local:') &&
-          !_categories.any((entry) => entry.id == _category)) {
-        _changeCategory('');
-      }
-    } catch (error) {
-      if (mounted &&
-          generation == _categoryGeneration &&
-          source == _source.id) {
-        setState(() {
-          _categoriesLoading = false;
-          _categoriesError = error.toString();
-        });
-      }
+    final error = await _browser.loadCategories(group, force: force);
+    if (!mounted ||
+        generation != _categoryGeneration ||
+        group.id != _group.id) {
+      return;
+    }
+    setState(() {
+      _categoriesLoading = false;
+      _categoriesError = error;
+    });
+    if (_category.isNotEmpty &&
+        !_categories.any((entry) => entry.id == _category)) {
+      _changeCategory('');
     }
   }
 
   Future<void> _refreshCatalog() async {
-    await Future.wait([_loadCategories(force: true), _load(force: true)]);
+    await _loadCategories(force: true);
+    if (mounted) await _load(force: true);
   }
 
   void _changeGroup(SourceGroup group) {
-    if (_source.groupId == group.id) return;
-    final previous = _groupSources[group.id];
-    _changeSource(
-      group.sources.where((entry) => entry.id == previous).firstOrNull ??
-          group.sources.first,
-    );
+    if (_source.groupId != group.id) _changeSource(group.sources.first);
   }
 
   void _changeCategory(String category) {
     if (_category == category) return;
-    final before = _requestCategory;
-    final hadSearch = _source.onlineSearch && _search.text.isNotEmpty;
+    _debounce?.cancel();
     setState(() {
-      _categorySelections[_source.id] = category;
-      if (hadSearch) {
+      _categorySelections[_group.id] = category;
+      if (_source.onlineSearch) {
         _search.clear();
         _submittedQuery = '';
       }
-      if (before != _requestCategory || hadSearch) {
-        _items = [];
-        _hasMore = true;
-        _page = 1;
-        _error = null;
-      }
+      _items = [];
+      _hasMore = true;
+      _error = null;
     });
     if (_scroll.hasClients) _scroll.jumpTo(0);
-    if (before != _requestCategory || hadSearch) _load(useCache: true);
+    _load(useCache: true);
+  }
+
+  void _swipeCategory(DragEndDetails details) {
+    final velocity = details.primaryVelocity ?? 0;
+    if (velocity.abs() < 240) return;
+    final categories = _categories;
+    final index = categories.indexWhere((entry) => entry.id == _category);
+    final next = index + (velocity < 0 ? 1 : -1);
+    if (next >= 0 && next < categories.length) {
+      _changeCategory(categories[next].id);
+    }
+  }
+
+  void _toggleSearch() {
+    if (AppLayout.isTelevision(context)) {
+      _televisionSearch();
+      return;
+    }
+    final hadQuery = _search.text.isNotEmpty;
+    setState(() {
+      _searchVisible = !_searchVisible;
+      if (!_searchVisible) _search.clear();
+    });
+    if (!_searchVisible && hadQuery) _searchChanged('');
+  }
+
+  void _openRankings() {
+    Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => RankingsScreen(
+          repository: widget.repository,
+          store: widget.store,
+          initialGroup: _group.id,
+        ),
+      ),
+    );
   }
 
   Future<void> _manageSources() async {
@@ -156,31 +154,10 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
     );
-    if (!mounted || _source.onlineSearch && _submittedQuery.isNotEmpty) return;
-    final source = _source.id;
-    final generation = ++_generation;
-    try {
-      final cached = await widget.repository.cached(
-        source,
-        category: _requestCategory,
-      );
-      if (!mounted || generation != _generation || source != _source.id) return;
-      setState(() {
-        if (cached.items.isNotEmpty) {
-          _items = cached.items;
-          _page = cached.page;
-          _hasMore = cached.hasMore;
-        }
-        _loading = false;
-        _loadingMore = false;
-      });
-    } catch (_) {
-      if (mounted && generation == _generation) {
-        setState(() {
-          _loading = false;
-          _loadingMore = false;
-        });
-      }
+    if (!mounted) return;
+    await _loadCategories();
+    if (mounted && (!_source.onlineSearch || _submittedQuery.isEmpty)) {
+      await _load(useCache: true);
     }
   }
 
@@ -252,7 +229,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _source = SourceSite.byId(widget.store.source);
-    _groupSources[_source.groupId] = _source.id;
+    _browser = CatalogBrowser(widget.repository);
     if (widget.store.sources.isNotEmpty) {
       _load(useCache: true);
       _loadCategories();
@@ -276,83 +253,47 @@ class _HomeScreenState extends State<HomeScreen> {
     bool useCache = false,
     bool force = false,
   }) async {
-    if (more && (_loading || _loadingMore || !_hasMore)) {
-      return;
-    }
+    if (more && (_loading || _loadingMore || !_hasMore)) return;
     final generation = ++_generation;
-    final source = _source;
-    final category = _requestCategory;
-    final query = source.onlineSearch ? _search.text.trim() : '';
-    final page = more ? _page + 1 : 1;
+    final group = _group;
+    final query = _source.onlineSearch ? _search.text.trim() : '';
     setState(() {
       _error = null;
+      if (query.isNotEmpty) _categorySelections[group.id] = '';
       _failedMore = false;
       if (more) {
         _loadingMore = true;
       } else {
         _loading = true;
         _loadingMore = false;
-        if (query != _submittedQuery) {
-          _items = [];
-        }
+        if (query != _submittedQuery) _items = [];
       }
     });
-    if (useCache && !force && query.isEmpty) {
-      try {
-        final cached = await widget.repository.cached(
-          source.id,
-          category: category,
-        );
-        if (!mounted || generation != _generation) {
-          return;
-        }
-        if (cached.items.isNotEmpty) {
-          setState(() {
-            _items = cached.items;
-            _page = cached.page;
-            _hasMore = cached.hasMore;
-            _submittedQuery = query;
-            _loading = !cached.fresh;
-          });
-          if (cached.fresh) {
-            return;
-          }
-        }
-      } catch (_) {}
-    }
-    try {
-      final result = await widget.repository.catalog(
-        source.id,
-        page: page,
-        query: query,
-        category: category,
-        force: force,
-      );
-      if (!mounted || generation != _generation) {
-        return;
-      }
+    void accept(CatalogPage result, {bool cached = false}) {
+      if (!mounted || generation != _generation) return;
       setState(() {
-        final entries = <String, Drama>{};
-        if (more) {
-          for (final item in _items) {
-            entries[item.id] = item;
-          }
-        }
-        for (final item in result.items) {
-          entries[item.id] = item;
-        }
-        _items = entries.values.toList();
-        _page = result.page;
+        _items = result.items;
         _hasMore = result.hasMore;
         _submittedQuery = query;
-        _loading = false;
+        _loading = cached && !result.fresh;
         _loadingMore = false;
         _error = result.warning.isEmpty ? null : result.warning;
       });
+    }
+
+    try {
+      final result = await _browser.load(
+        group,
+        category: _category,
+        query: query,
+        more: more,
+        useCache: useCache,
+        force: force,
+        onCached: (result) => accept(result, cached: true),
+      );
+      accept(result);
     } catch (error) {
-      if (!mounted || generation != _generation) {
-        return;
-      }
+      if (!mounted || generation != _generation) return;
       setState(() {
         _loading = false;
         _loadingMore = false;
@@ -370,10 +311,8 @@ class _HomeScreenState extends State<HomeScreen> {
     _search.clear();
     setState(() {
       _source = source;
-      _groupSources[source.groupId] = source.id;
       _items = [];
       _hasMore = true;
-      _page = 1;
       _submittedQuery = '';
       _error = null;
     });
@@ -413,7 +352,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return _items.where((drama) {
       if (!widget.store.allowsSource(drama.source)) return false;
       if (_category.startsWith('local:') &&
-          drama.category.trim() != _category.substring(6)) {
+          categoryName(drama.category) != _category.substring(6)) {
         return false;
       }
       if (_hideVip && drama.vip) {
@@ -435,22 +374,68 @@ class _HomeScreenState extends State<HomeScreen> {
         final scaffold = Scaffold(
           appBar: AppBar(
             toolbarHeight: television ? 64 : null,
-            title: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.play_circle_filled_rounded,
-                  color: Theme.of(context).colorScheme.primary,
-                  size: 30,
+            titleSpacing: 12,
+            title: _tab == 0
+                ? PopupMenuButton<SourceGroup>(
+                    key: const ValueKey('source-switch'),
+                    tooltip: '切换站源',
+                    enabled: _sourceGroups.length > 1,
+                    onSelected: _changeGroup,
+                    itemBuilder: (_) => [
+                      for (final group in _sourceGroups)
+                        PopupMenuItem(
+                          value: group,
+                          child: Row(
+                            children: [
+                              Expanded(child: Text(group.name)),
+                              if (group.id == _group.id)
+                                const Icon(Icons.check_rounded, size: 20),
+                            ],
+                          ),
+                        ),
+                    ],
+                    child: SizedBox(
+                      height: 48,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Flexible(
+                            child: Text(
+                              _group.name,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                          if (_sourceGroups.length > 1)
+                            const Icon(Icons.expand_more_rounded),
+                        ],
+                      ),
+                    ),
+                  )
+                : const Text(appName),
+            actions: [
+              if (_tab == 0) ...[
+                IconButton(
+                  key: const ValueKey('open-rankings'),
+                  tooltip: '榜单',
+                  icon: const Icon(Icons.leaderboard_outlined),
+                  onPressed: widget.store.sources.isEmpty
+                      ? null
+                      : _openRankings,
                 ),
-                const SizedBox(width: 9),
-                const Text(
-                  appName,
-                  style: TextStyle(fontWeight: FontWeight.w800),
+                IconButton(
+                  key: const ValueKey('toggle-search'),
+                  tooltip: _searchVisible ? '收起搜索' : '搜索',
+                  icon: Icon(
+                    _searchVisible
+                        ? Icons.search_off_rounded
+                        : Icons.search_rounded,
+                  ),
+                  onPressed: _toggleSearch,
                 ),
               ],
-            ),
-            actions: [
               if (_tab == 0)
                 RefreshAction(
                   key: const ValueKey('catalog-refresh'),
@@ -659,25 +644,14 @@ class _HomeScreenState extends State<HomeScreen> {
     final television = AppLayout.isTelevision(context);
     return Column(
       children: [
-        if (television)
+        if (_searchVisible && !television)
           Padding(
-            padding: const EdgeInsets.fromLTRB(18, 8, 18, 0),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: RemoteButton(
-                label: '搜索',
-                icon: Icons.search_rounded,
-                onPressed: _televisionSearch,
-              ),
-            ),
-          )
-        else
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
             child: SearchInput(
-              key: ValueKey('search-${_source.id}'),
+              key: ValueKey('search-${_group.id}'),
               controller: _search,
-              hint: _source.onlineSearch ? '搜索红果短剧' : '筛选当前已加载短剧',
+              autofocus: true,
+              hint: _source.onlineSearch ? '搜索红果短剧' : '筛选本机已更新剧库',
               suggestions: _source.onlineSearch
                   ? widget.repository.suggestions
                   : null,
@@ -693,49 +667,33 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
         CatalogFilters(
-          groups: _sourceGroups,
-          source: _source,
+          key: ValueKey('filters-${_group.id}'),
           categories: _categories,
           category: _category,
-          loading: _categoriesLoading,
           error: _categoriesError,
-          onGroup: _changeGroup,
-          onSource: _changeSource,
           onCategory: _changeCategory,
           onRetry: () => _loadCategories(force: true),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(18, 0, 12, 8),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  _submittedQuery.isNotEmpty && _source.onlineSearch
-                      ? '搜索结果 · ${items.length} 部'
-                      : '${_source.description} · ${items.length} 部',
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    fontSize: television ? 14 : 12,
+          trailing: _supportsVipFilter
+              ? IconButton(
+                  tooltip: widget.store.hideVip ? 'VIP：隐藏' : 'VIP：显示',
+                  onPressed: () =>
+                      widget.store.setHideVip(!widget.store.hideVip),
+                  icon: Icon(
+                    widget.store.hideVip
+                        ? Icons.visibility_off_outlined
+                        : Icons.visibility_outlined,
+                    size: 20,
                   ),
-                ),
-              ),
-              if (_supportsVipFilter)
-                Tooltip(
-                  message: widget.store.hideVip ? '当前隐藏 VIP 内容' : '当前显示 VIP 内容',
-                  child: TextButton.icon(
-                    onPressed: () =>
-                        widget.store.setHideVip(!widget.store.hideVip),
-                    icon: Icon(
-                      widget.store.hideVip
-                          ? Icons.visibility_off_outlined
-                          : Icons.visibility_outlined,
-                      size: 17,
-                    ),
-                    label: Text(widget.store.hideVip ? 'VIP：隐藏' : 'VIP：显示'),
+                )
+              : _category.startsWith('local:')
+              ? const Tooltip(
+                  message: '筛选本机已更新剧库；更新站源可获取更多分类和剧集',
+                  child: Padding(
+                    padding: EdgeInsets.only(right: 12),
+                    child: Icon(Icons.info_outline, size: 18),
                   ),
-                ),
-            ],
-          ),
+                )
+              : null,
         ),
         if (_loading && _items.isNotEmpty)
           const LinearProgressIndicator(minHeight: 2),
@@ -776,131 +734,135 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
         Expanded(
-          child: _loading && _items.isEmpty
-              ? const Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      CircularProgressIndicator(),
-                      SizedBox(height: 18),
-                      Text('正在加载剧集'),
-                    ],
-                  ),
-                )
-              : _items.isEmpty && _error != null
-              ? StatusPanel(
-                  title: '暂时无法加载',
-                  message: _error!,
-                  onRetry: () => _load(force: true),
-                  secondaryAction: widget.repository.supportsSourceManagement
-                      ? TextButton(
-                          onPressed: _manageSources,
-                          child: const Text('站源诊断'),
-                        )
-                      : null,
-                  icon: Icons.wifi_off_rounded,
-                )
-              : items.isEmpty
-              ? StatusPanel(
-                  title: '没有找到匹配的短剧',
-                  message: _hideVip
-                      ? '可以换个搜索词，或显示 VIP 内容。'
-                      : widget.store.sources.length > 1
-                      ? '可以换个搜索词或切换站源。'
-                      : '可以换个搜索词，或刷新后重试。',
-                  onRetry:
-                      _hasMore &&
-                          !_loadingMore &&
-                          (!_source.onlineSearch || _search.text.isEmpty)
-                      ? () => _load(more: true)
-                      : null,
-                  action: '加载更多',
-                )
-              : LayoutBuilder(
-                  builder: (context, constraints) {
-                    if (television) {
-                      return _televisionGrid(
-                        items,
-                        constraints.maxWidth,
-                        key: 'catalog-${_source.id}-$_submittedQuery',
-                        controller: _scroll,
-                        footer: Padding(
-                          padding: const EdgeInsets.fromLTRB(18, 0, 18, 24),
-                          child: Center(
-                            child: _loadingMore
-                                ? const CircularProgressIndicator()
-                                : _hasMore
-                                ? RemoteButton(
-                                    label: '加载更多',
-                                    icon: Icons.expand_more,
-                                    onPressed: () => _load(more: true),
-                                  )
-                                : const Text('已经看到这里的全部剧集'),
+          child: GestureDetector(
+            onHorizontalDragEnd: television ? null : _swipeCategory,
+            child: _loading && _items.isEmpty
+                ? const Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        CircularProgressIndicator(),
+                        SizedBox(height: 18),
+                        Text('正在加载剧集'),
+                      ],
+                    ),
+                  )
+                : _items.isEmpty && _error != null
+                ? StatusPanel(
+                    title: '暂时无法加载',
+                    message: _error!,
+                    onRetry: () => _load(force: true),
+                    secondaryAction: widget.repository.supportsSourceManagement
+                        ? TextButton(
+                            onPressed: _manageSources,
+                            child: const Text('站源诊断'),
+                          )
+                        : null,
+                    icon: Icons.wifi_off_rounded,
+                  )
+                : items.isEmpty
+                ? StatusPanel(
+                    title: '没有找到匹配的短剧',
+                    message: _hideVip
+                        ? '可以换个搜索词，或显示 VIP 内容。'
+                        : widget.store.sources.length > 1
+                        ? '可以换个搜索词或切换站源。'
+                        : '可以换个搜索词，或刷新后重试。',
+                    onRetry:
+                        _hasMore &&
+                            !_loadingMore &&
+                            (!_source.onlineSearch || _search.text.isEmpty)
+                        ? () => _load(more: true)
+                        : null,
+                    action: '加载更多',
+                  )
+                : LayoutBuilder(
+                    builder: (context, constraints) {
+                      if (television) {
+                        return _televisionGrid(
+                          items,
+                          constraints.maxWidth,
+                          key:
+                              'catalog-${_group.id}-$_category-$_submittedQuery',
+                          controller: _scroll,
+                          footer: Padding(
+                            padding: const EdgeInsets.fromLTRB(18, 0, 18, 24),
+                            child: Center(
+                              child: _loadingMore
+                                  ? const CircularProgressIndicator()
+                                  : _hasMore
+                                  ? RemoteButton(
+                                      label: '加载更多',
+                                      icon: Icons.expand_more,
+                                      onPressed: () => _load(more: true),
+                                    )
+                                  : const Text('已经看到这里的全部剧集'),
+                            ),
                           ),
+                        );
+                      }
+                      final padding = constraints.maxWidth < 600 ? 16.0 : 24.0;
+                      return RefreshIndicator(
+                        onRefresh: _refreshCatalog,
+                        child: CustomScrollView(
+                          controller: _scroll,
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          slivers: [
+                            SliverPadding(
+                              padding: EdgeInsets.fromLTRB(
+                                padding,
+                                0,
+                                padding,
+                                16,
+                              ),
+                              sliver: SliverGrid(
+                                gridDelegate: dramaGridDelegate(
+                                  context,
+                                  constraints.maxWidth - 2 * padding,
+                                ),
+                                delegate: SliverChildBuilderDelegate(
+                                  (_, index) => DramaTile(
+                                    key: ValueKey(items[index].id),
+                                    drama: items[index],
+                                    repository: widget.repository,
+                                    onTap: () => _openDrama(items[index]),
+                                  ),
+                                  childCount: items.length,
+                                ),
+                              ),
+                            ),
+                            SliverToBoxAdapter(
+                              child: Padding(
+                                padding: const EdgeInsets.only(bottom: 24),
+                                child: Center(
+                                  child: _loadingMore
+                                      ? const CircularProgressIndicator()
+                                      : _hasMore
+                                      ? OutlinedButton.icon(
+                                          onPressed: () => _load(more: true),
+                                          icon: const Icon(
+                                            Icons.expand_more_rounded,
+                                          ),
+                                          label: const Text('加载更多'),
+                                        )
+                                      : Text(
+                                          '已经看到这里的全部剧集',
+                                          style: TextStyle(
+                                            color: Theme.of(
+                                              context,
+                                            ).colorScheme.onSurfaceVariant,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       );
-                    }
-                    final padding = constraints.maxWidth < 600 ? 16.0 : 24.0;
-                    return RefreshIndicator(
-                      onRefresh: _refreshCatalog,
-                      child: CustomScrollView(
-                        controller: _scroll,
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        slivers: [
-                          SliverPadding(
-                            padding: EdgeInsets.fromLTRB(
-                              padding,
-                              0,
-                              padding,
-                              16,
-                            ),
-                            sliver: SliverGrid(
-                              gridDelegate: dramaGridDelegate(
-                                context,
-                                constraints.maxWidth - 2 * padding,
-                              ),
-                              delegate: SliverChildBuilderDelegate(
-                                (_, index) => DramaTile(
-                                  key: ValueKey(items[index].id),
-                                  drama: items[index],
-                                  repository: widget.repository,
-                                  onTap: () => _openDrama(items[index]),
-                                ),
-                                childCount: items.length,
-                              ),
-                            ),
-                          ),
-                          SliverToBoxAdapter(
-                            child: Padding(
-                              padding: const EdgeInsets.only(bottom: 24),
-                              child: Center(
-                                child: _loadingMore
-                                    ? const CircularProgressIndicator()
-                                    : _hasMore
-                                    ? OutlinedButton.icon(
-                                        onPressed: () => _load(more: true),
-                                        icon: const Icon(
-                                          Icons.expand_more_rounded,
-                                        ),
-                                        label: const Text('加载更多'),
-                                      )
-                                    : Text(
-                                        '已经看到这里的全部剧集',
-                                        style: TextStyle(
-                                          color: Theme.of(
-                                            context,
-                                          ).colorScheme.onSurfaceVariant,
-                                          fontSize: 12,
-                                        ),
-                                      ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
+                    },
+                  ),
+          ),
         ),
       ],
     );

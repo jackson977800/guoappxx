@@ -108,9 +108,9 @@ class DramaCover extends StatelessWidget {
         fit: StackFit.expand,
         children: [
           placeholder,
-          if (!imagesDisabled && drama.cover.isNotEmpty)
+          if (!imagesDisabled && drama.id.isNotEmpty)
             CachedCoverImage(
-              key: ValueKey('${drama.source}\u0000${drama.cover}'),
+              key: ValueKey('${drama.id}\u0000${drama.cover}'),
               drama: drama,
               repository: repository,
               placeholder: placeholder,
@@ -193,6 +193,7 @@ class _CachedCoverImageState extends State<CachedCoverImage> {
   void didUpdateWidget(covariant CachedCoverImage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.repository != widget.repository ||
+        oldWidget.drama.id != widget.drama.id ||
         oldWidget.drama.cover != widget.drama.cover ||
         oldWidget.drama.source != widget.drama.source) {
       _file = widget.repository.cover(widget.drama);

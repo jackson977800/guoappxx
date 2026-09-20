@@ -13,6 +13,8 @@ import 'background_downloads.dart';
 import 'local_store.dart';
 import 'app_build.dart';
 import 'source_status.dart';
+import 'ranking_models.dart';
+import 'cover_decoder.dart';
 
 typedef _NativeRequest = Pointer<Utf8> Function(Pointer<Utf8>);
 typedef _DartRequest = Pointer<Utf8> Function(Pointer<Utf8>);
@@ -61,6 +63,12 @@ class AppFailure implements Exception {
 }
 
 abstract class AppRepository {
+  Future<List<RankingBoard>> rankingBoards() async => const [];
+  Future<RankingPage> rankings(
+    String board, {
+    int page = 1,
+    bool force = false,
+  }) async => throw AppFailure('当前环境不支持榜单');
   Future<List<CatalogCategory>> categories(
     String source, {
     bool force = false,
@@ -115,12 +123,42 @@ abstract class AppRepository {
 }
 
 class NativeRepository extends AppRepository {
+  static final _coverDecoder = CoverDecoder();
   NativeRepository({this.background = false});
   final bool background;
   LocalStore? access;
 
   @override
   bool get supportsSourceManagement => true;
+
+  @override
+  Future<List<RankingBoard>> rankingBoards() async {
+    final result = await _call({'action': 'rankingBoards'});
+    return [
+          for (final row in result['items'] as List? ?? [])
+            RankingBoard.fromJson(Map<String, dynamic>.from(row as Map)),
+        ]
+        .where(
+          (board) =>
+              SourceSite.isAvailable(board.source) &&
+              (access?.allowsSource(board.source) ?? true),
+        )
+        .toList();
+  }
+
+  @override
+  Future<RankingPage> rankings(
+    String board, {
+    int page = 1,
+    bool force = false,
+  }) async => RankingPage.fromJson(
+    await _call({
+      'action': 'rankings',
+      'board': board,
+      'page': page,
+      'force': force,
+    }),
+  );
 
   @override
   Future<SourceStatus> sourceStatus(String source) async =>
@@ -227,6 +265,9 @@ class NativeRepository extends AppRepository {
           action == 'workLease' && input['command'] == 'end';
       final epoch = access?.profileEpoch;
       if (!unrestricted && access?.locked == true) throw AppFailure('请先解锁当前用户');
+      if (action == 'rankings') {
+        _authorize(RankingBoard.sourceForID(input['board'] as String));
+      }
       if ({
         'catalog',
         'cached',
@@ -239,6 +280,7 @@ class NativeRepository extends AppRepository {
       }
       if ({
         'cover',
+        'prepareCover',
         'detail',
         'resolve',
         'enqueueDownloads',
@@ -351,16 +393,23 @@ class NativeRepository extends AppRepository {
       );
   @override
   Future<String> cover(Drama drama, {bool force = false}) async {
+    final epoch = access?.profileEpoch;
     final result = await _call({
       'action': 'cover',
       'drama': drama.toJson(),
       'force': force,
     });
     final file = result['path'] as String? ?? '';
-    if (file.isEmpty) {
-      throw AppFailure('海报暂时不可用');
-    }
-    return file;
+    if (file.isEmpty) throw AppFailure('海报暂不可用');
+    if (result['heic'] != true) return file;
+    final converted = await _coverDecoder.convert(
+      file,
+      () => _call({'action': 'prepareCover', 'drama': drama.toJson()}),
+      force: force,
+    );
+    _authorize(drama.source);
+    if (epoch != access?.profileEpoch) throw AppFailure('用户已切换，请重新操作');
+    return converted;
   }
 
   @override

@@ -20,7 +20,7 @@ import (
 	"time"
 )
 
-const nativeCoverMaxBytes = 8 << 20
+const nativeCoverMaxBytes = 20 << 20
 const nativeCoverCacheBytes = 256 << 20
 const nativeCoverCacheEntries = 2000
 const nativeCoverTTL = 30 * 24 * time.Hour
@@ -38,14 +38,16 @@ type nativeCoverCall struct {
 }
 
 type nativeCoverCache struct {
-	directory  string
-	downloader *Downloader
-	mu         sync.Mutex
-	entries    map[string]nativeCoverEntry
-	pending    map[string]*nativeCoverCall
-	slots      chan struct{}
-	size       int64
-	limit      int64
+	directory   string
+	downloader  *Downloader
+	mu          sync.Mutex
+	entries     map[string]nativeCoverEntry
+	pending     map[string]*nativeCoverCall
+	slots       chan struct{}
+	repairSlots chan struct{}
+	repairs     map[string]*nativeCoverRepair
+	size        int64
+	limit       int64
 }
 
 func newNativeCoverCache(directory string, downloader *Downloader) *nativeCoverCache {
@@ -53,9 +55,15 @@ func newNativeCoverCache(directory string, downloader *Downloader) *nativeCoverC
 		directory: filepath.Join(directory, "covers-v1"), downloader: downloader,
 		entries: map[string]nativeCoverEntry{}, pending: map[string]*nativeCoverCall{},
 		slots: make(chan struct{}, 4), limit: nativeCoverCacheBytes,
+		repairSlots: make(chan struct{}, 1), repairs: map[string]*nativeCoverRepair{},
 	}
 	files, _ := os.ReadDir(cache.directory)
 	for _, file := range files {
+		if strings.HasPrefix(file.Name(), ".decode-") && !file.IsDir() {
+			if info, err := file.Info(); err == nil && time.Since(info.ModTime()) > time.Hour {
+				_ = os.Remove(filepath.Join(cache.directory, file.Name()))
+			}
+		}
 		key, valid := strings.CutSuffix(file.Name(), ".img")
 		if !valid || len(key) != 64 || file.IsDir() {
 			continue
@@ -84,7 +92,13 @@ func nativeCoverReferer(downloader *Downloader, source, address string) string {
 		if parsed, err := url.Parse(address); err == nil && (strings.EqualFold(parsed.Hostname(), "tideember.cc") || strings.EqualFold(parsed.Hostname(), "xqjurgek.top")) {
 			return parsed.Scheme + "://" + parsed.Host + "/home"
 		}
-		return downloader.providerBaseURL(source) + "/home"
+		downloader.providerMu.Lock()
+		host := downloader.providerHosts[source]
+		downloader.providerMu.Unlock()
+		if host == "" {
+			host = downloader.providerBaseURL(source)
+		}
+		return host + "/home"
 	}
 	return downloader.providerBaseURL(source) + "/"
 }
@@ -93,7 +107,7 @@ func validNativeCoverURL(address *url.URL) bool {
 	return address != nil && (address.Scheme == "https" || address.Scheme == "http") && address.Hostname() != "" && address.User == nil
 }
 
-func (cache *nativeCoverCache) load(ctx context.Context, drama nativeDrama, force bool) (string, error) {
+func (cache *nativeCoverCache) loadAddress(ctx context.Context, drama nativeDrama, force bool) (string, error) {
 	drama.Cover = repairLegacyCoverURL(drama)
 	address, err := url.Parse(drama.Cover)
 	if err != nil || !validNativeCoverURL(address) {
@@ -185,7 +199,7 @@ func (cache *nativeCoverCache) fetch(key string, drama nativeDrama, referer, fal
 }
 
 func (cache *nativeCoverCache) download(ctx context.Context, address, referer string) ([]byte, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
+	request, err := http.NewRequestWithContext(context.WithValue(ctx, nativeCoverNetworkKey{}, true), http.MethodGet, address, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -262,6 +276,9 @@ func nativeDecodeCover(data []byte) []byte {
 }
 
 func nativeIsCoverImage(data []byte) bool {
+	if isHEICImage(data) {
+		return true
+	}
 	if bytes.HasPrefix(data, []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}) ||
 		bytes.HasPrefix(data, []byte{0xff, 0xd8, 0xff}) || bytes.HasPrefix(data, []byte("GIF87a")) || bytes.HasPrefix(data, []byte("GIF89a")) {
 		return true

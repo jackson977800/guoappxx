@@ -188,3 +188,20 @@ func writeNativeCacheFile(path string, data []byte) error {
 	}
 	return os.Rename(temporary.Name(), path)
 }
+
+func (engine *nativeEngine) saveDetailMetadata(drama nativeDrama) {
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	changed := false
+	for _, items := range engine.catalogs {
+		for index := range items {
+			if items[index].ID == drama.ID {
+				items[index] = mergeNativeDrama(items[index], drama)
+				changed = true
+			}
+		}
+	}
+	if changed {
+		engine.writeCatalogDiskLocked()
+	}
+}

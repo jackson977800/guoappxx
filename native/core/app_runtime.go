@@ -36,6 +36,7 @@ type Config struct {
 }
 
 type Downloader struct {
+	rankings              rankingCache
 	cfg                   Config
 	client                *http.Client
 	huangdouDetails       map[string]huangdouDetailEntry
@@ -77,6 +78,7 @@ type nativeDrama struct {
 }
 
 type nativeInput struct {
+	Board     string                  `json:"board"`
 	Entries   []nativeDownloadEpisode `json:"entries"`
 	JobID     string                  `json:"jobId"`
 	Command   string                  `json:"command"`
@@ -189,7 +191,19 @@ func nativeNormalize(drama Drama) nativeDrama {
 	source, sourceID, _ := splitProviderDramaID(drama.ID)
 	return nativeDrama{ID: drama.ID, Source: source, SourceID: sourceID, Title: drama.DisplayTitle(),
 		Description: firstNonEmpty(drama.Desc, drama.Intro), Cover: cover, Episodes: episodes,
-		Category: firstNonEmpty(drama.CategoryName, drama.Category, drama.ChannelName), VIP: drama.VIP != nil && *drama.VIP}
+		Category: nativeDramaCategory(drama), VIP: drama.VIP != nil && *drama.VIP}
+}
+
+func nativeDramaCategory(drama Drama) string {
+	category := firstNonEmpty(drama.CategoryName, drama.CategoryNameSnake, drama.TypeName, drama.TypeNameSnake, drama.SortName, drama.SortNameSnake, drama.Category)
+	if category != "" {
+		return category
+	}
+	switch drama.ChannelName {
+	case "真人剧", "短剧", "漫剧", "AI 剧", "AI剧", "AI 短剧", "AI 漫剧", "AI 换脸", "AI 魔改":
+		return drama.ChannelName
+	}
+	return ""
 }
 
 func newNativeEngine(directory string) (*nativeEngine, error) {
@@ -221,6 +235,7 @@ func newNativeEngine(directory string) (*nativeEngine, error) {
 			return nil
 		}}
 	engine := &nativeEngine{downloader: d, directory: directory, catalogs: map[string][]nativeDrama{}, catalogStates: map[string]nativeCatalogState{}}
+	d.loadRankingCache()
 	engine.loadCatalogCache()
 	engine.loadSourceRecords()
 	engine.covers = newNativeCoverCache(directory, d)
@@ -295,7 +310,7 @@ func nativeDispatch(input nativeInput) (any, error) {
 			nativeState.engine = engine
 		}
 		nativeState.Unlock()
-		return map[string]any{"version": "0.2.6", "standalone": true, "allSources": buildAllSources == "true"}, nil
+		return map[string]any{"version": "0.2.7", "standalone": true, "allSources": buildAllSources == "true"}, nil
 	}
 	engine := nativeState.engine
 	nativeState.Unlock()
@@ -309,6 +324,16 @@ func nativeDispatch(input nativeInput) (any, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), duration)
 	defer cancel()
 	switch input.Action {
+	case "rankingBoards":
+		boards := []rankingBoard{}
+		for _, board := range rankingBoards {
+			if nativeSourceAvailable(board.Source) {
+				boards = append(boards, board)
+			}
+		}
+		return map[string]any{"items": boards}, nil
+	case "rankings":
+		return engine.nativeRanking(ctx, input)
 	case "suggestions":
 		items, err := engine.suggestions(ctx, input.Query)
 		return map[string]any{"items": items}, err
@@ -352,8 +377,9 @@ func nativeDispatch(input nativeInput) (any, error) {
 	case "cancelSourceJob":
 		return engine.cancelSourceTask(input.Source), nil
 	case "cover":
-		path, err := engine.covers.load(ctx, input.Drama, input.Force)
-		return map[string]string{"path": path}, err
+		return engine.loadCover(ctx, input.Drama, input.Force)
+	case "prepareCover":
+		return engine.prepareCover(ctx, input.Drama)
 	case "detail":
 		return engine.nativeDetail(ctx, input.Drama)
 	case "resolve", "fallback":
@@ -528,6 +554,7 @@ func (engine *nativeEngine) nativeDetail(ctx context.Context, drama nativeDrama)
 		}
 	}
 	drama.Source, drama.SourceID, drama.Episodes = source, sourceID, len(chapters)
+	engine.saveDetailMetadata(drama)
 	return map[string]any{"drama": drama, "chapters": chapters}, nil
 }
 
