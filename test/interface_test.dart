@@ -122,6 +122,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(store.hideVip, isTrue);
     final hongguo = find.widgetWithText(ChoiceChip, '红果');
+    final sourceList = find.byWidgetPredicate(
+      (widget) => widget is ListView && widget.scrollDirection == Axis.horizontal,
+    );
+    await tester.drag(sourceList, const Offset(600, 0));
+    await tester.pumpAndSettle();
     await tester.ensureVisible(hongguo);
     await tester.tap(hongguo);
     await tester.pumpAndSettle();

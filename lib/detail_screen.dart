@@ -10,6 +10,7 @@ import 'models.dart';
 import 'player_screen.dart';
 import 'remote_widgets.dart';
 import 'widgets.dart';
+import 'sources_screen.dart';
 
 class DetailScreen extends StatefulWidget {
   const DetailScreen({
@@ -30,6 +31,14 @@ class _DetailScreenState extends State<DetailScreen> {
   String? _error;
   bool _loading = true;
   int _generation = 0;
+  Widget? get _sourceDiagnostics => widget.repository.supportsSourceManagement
+      ? SourceDiagnosticsButton(
+          repository: widget.repository,
+          store: widget.store,
+          drama: widget.drama,
+        )
+      : null;
+
   @override
   void initState() {
     super.initState();
@@ -347,6 +356,7 @@ class _DetailScreenState extends State<DetailScreen> {
                               title: '剧集信息暂时不可用',
                               message: _error!,
                               onRetry: _load,
+                              secondaryAction: _sourceDiagnostics,
                             ),
                           )
                         else ...[
@@ -542,6 +552,7 @@ class _DetailScreenState extends State<DetailScreen> {
                   title: '剧集信息暂时不可用',
                   message: _error!,
                   onRetry: _load,
+                  secondaryAction: _sourceDiagnostics,
                 )
               : episodes.isEmpty
               ? StatusPanel(

@@ -15,6 +15,7 @@ class SourceSite {
     SourceSite('huangdou', '黄豆', '精选短剧'),
     SourceSite('huangguo-video', '黄果视频', '视频剧集'),
     SourceSite('huangguoai', '黄果 AI', 'AI 短剧'),
+    SourceSite('cloudfront', '黄果旧版', '旧 API 剧库'),
   ];
   static const values = allSourcesEnabled ? knownValues : [hongguo];
   static bool isAvailable(String id) => values.any((site) => site.id == id);

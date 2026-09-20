@@ -12,6 +12,7 @@ import 'models.dart';
 import 'background_downloads.dart';
 import 'local_store.dart';
 import 'app_build.dart';
+import 'source_status.dart';
 
 typedef _NativeRequest = Pointer<Utf8> Function(Pointer<Utf8>);
 typedef _DartRequest = Pointer<Utf8> Function(Pointer<Utf8>);
@@ -60,6 +61,16 @@ class AppFailure implements Exception {
 }
 
 abstract class AppRepository {
+  bool get supportsSourceManagement => false;
+  Future<SourceStatus> sourceStatus(String source) async =>
+      SourceStatus.fromJson({'source': source});
+  Future<SourceStatus> startSourceJob(
+    String source,
+    String operation, {
+    Drama? drama,
+  }) async => throw AppFailure('当前环境不支持站源管理');
+  Future<SourceStatus> cancelSourceJob(String source) async =>
+      throw AppFailure('当前环境不支持站源管理');
   Future<List<String>> suggestions(String query) async => const [];
   Future<Map<String, dynamic>> storage() async => {};
   Future<String> downloadDirectory() async =>
@@ -102,6 +113,42 @@ class NativeRepository extends AppRepository {
   NativeRepository({this.background = false});
   final bool background;
   LocalStore? access;
+
+  @override
+  bool get supportsSourceManagement => true;
+
+  @override
+  Future<SourceStatus> sourceStatus(String source) async =>
+      SourceStatus.fromJson(
+        await _call({'action': 'sourceStatus', 'source': source}),
+      );
+
+  @override
+  Future<SourceStatus> startSourceJob(
+    String source,
+    String operation, {
+    Drama? drama,
+  }) async {
+    _authorize(source);
+    if (drama != null && drama.source != source) throw AppFailure('站源与剧集不匹配');
+    final epoch = access?.profileEpoch;
+    await BackgroundDownloads.ensureStarted();
+    if (epoch != access?.profileEpoch) throw AppFailure('用户已切换，请重新操作');
+    return SourceStatus.fromJson(
+      await _call({
+        'action': 'sourceJob',
+        'source': source,
+        'command': operation,
+        if (drama != null) 'drama': drama.toJson(),
+      }),
+    );
+  }
+
+  @override
+  Future<SourceStatus> cancelSourceJob(String source) async =>
+      SourceStatus.fromJson(
+        await _call({'action': 'cancelSourceJob', 'source': source}),
+      );
 
   void _authorize(String source, {bool download = false}) {
     if (!SourceSite.isAvailable(source)) {
@@ -175,7 +222,13 @@ class NativeRepository extends AppRepository {
           action == 'workLease' && input['command'] == 'end';
       final epoch = access?.profileEpoch;
       if (!unrestricted && access?.locked == true) throw AppFailure('请先解锁当前用户');
-      if ({'catalog', 'cached'}.contains(action)) {
+      if ({
+        'catalog',
+        'cached',
+        'sourceStatus',
+        'sourceJob',
+        'cancelSourceJob',
+      }.contains(action)) {
         _authorize(input['source'] as String);
       }
       if ({

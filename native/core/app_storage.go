@@ -211,5 +211,5 @@ func (engine *nativeEngine) workLease(id, command string) (int, error) {
 		}
 		manager.mediaBusy = engine.work["media"]
 	}
-	return len(engine.work), nil
+	return len(engine.work) + len(engine.sourceTasks), nil
 }

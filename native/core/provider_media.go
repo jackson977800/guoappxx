@@ -93,6 +93,9 @@ func (d *Downloader) resolveProviderMedia(ctx context.Context, task Task) (provi
 	if chapter.Source == "" {
 		chapter.Source = sourceFromDramaID(task.DramaID)
 	}
+	if chapter.Source == sourceCloudFront {
+		return d.resolveLegacyMedia(ctx, task)
+	}
 	if strings.HasPrefix(chapter.VideoURL, "hongguo-cenc://") {
 		return d.resolveHongguoMedia(ctx, task)
 	}
@@ -132,27 +135,29 @@ func (d *Downloader) resolveProviderMedia(ctx context.Context, task Task) (provi
 		}
 	}
 	if chapter.PageURL != "" && (chapter.Source == sourceHuangguoAI || chapter.Source == sourceHuangguoVideo) {
-		body, err := d.fetchProviderText(ctx, chapter.PageURL, media.Referer)
+		responses := &playbackResponseURLs{}
+		pageContext := context.WithValue(ctx, playbackResponseURLsKey{}, responses)
+		body, err := d.fetchProviderText(pageContext, chapter.PageURL, media.Referer)
 		if err != nil {
 			return providerMedia{}, err
 		}
+		pageURL := chapter.PageURL
+		if actual, ok := responses.values.Load(chapter.PageURL); ok {
+			pageURL = actual.(string)
+		}
 		if chapter.Source == sourceHuangguoAI {
-			media.URL = parseAIVideoURL(body, chapter.PageURL)
+			media.URL = parseAIVideoURL(body, pageURL)
 		} else {
-			media.URL = parseDataHLS(body, chapter.PageURL)
+			media.URL = parseDataHLS(body, pageURL)
 		}
-		d.providerMu.Lock()
-		if preferred := d.providerHosts[chapter.Source]; preferred != "" {
-			media.Referer = preferred + "/"
-		}
-		d.providerMu.Unlock()
+		media.Referer = pageURL
 	}
 	if !isProviderHTTPMediaURL(media.URL) {
 		return providerMedia{}, fmt.Errorf("%s 未返回有效播放地址，请刷新章节或确认站点访问权限", chapter.Source)
 	}
 	parsed, _ := url.Parse(media.URL)
 	if strings.HasSuffix(strings.ToLower(parsed.Path), ".m3u8") {
-		playlist, err := d.fetchProviderText(ctx, media.URL, media.Referer)
+		playlist, finalURL, err := d.fetchMediaPlaylist(ctx, media.URL, media.Referer)
 		if err != nil {
 			return providerMedia{}, fmt.Errorf("获取播放列表失败: %w", err)
 		}
@@ -163,6 +168,7 @@ func (d *Downloader) resolveProviderMedia(ctx context.Context, task Task) (provi
 			media.Duration = duration
 		}
 		media.Playlist = playlist
+		media.URL = finalURL
 	}
 	return media, nil
 }

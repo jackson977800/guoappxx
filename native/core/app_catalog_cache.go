@@ -69,13 +69,32 @@ func mergeNativeCatalog(first, second []nativeDrama) []nativeDrama {
 	}
 	for _, item := range second {
 		if index, found := indices[item.ID]; found {
-			items[index] = item
+			items[index] = mergeNativeDrama(items[index], item)
 		} else {
 			indices[item.ID] = len(items)
 			items = append(items, item)
 		}
 	}
 	return items
+}
+
+func mergeNativeDrama(previous, fresh nativeDrama) nativeDrama {
+	if fresh.Title == "" || fresh.Title == "短剧" {
+		fresh.Title = previous.Title
+	}
+	if fresh.Description == "" {
+		fresh.Description = previous.Description
+	}
+	if fresh.Cover == "" {
+		fresh.Cover = previous.Cover
+	}
+	if fresh.Category == "" {
+		fresh.Category = previous.Category
+	}
+	if fresh.Episodes == 0 {
+		fresh.Episodes = previous.Episodes
+	}
+	return fresh
 }
 
 func (engine *nativeEngine) saveCatalogCache(source string, result *nativeCatalogResult) {
@@ -86,7 +105,14 @@ func (engine *nativeEngine) saveCatalogCache(source string, result *nativeCatalo
 	var items []nativeDrama
 	if result.Page == 1 {
 		items = result.Items
-		if source == sourceHongguo && len(previous) > 0 {
+		if len(previous) > 0 {
+			old := make(map[string]nativeDrama, len(previous))
+			for _, item := range previous {
+				old[item.ID] = item
+			}
+			for index, item := range items {
+				items[index] = mergeNativeDrama(old[item.ID], item)
+			}
 			fresh := make(map[string]bool, len(items))
 			for _, item := range items {
 				fresh[item.ID] = true
@@ -98,15 +124,25 @@ func (engine *nativeEngine) saveCatalogCache(source string, result *nativeCatalo
 			}
 			result.Items = items
 			result.Page = max(1, state.Page)
+			if source != sourceHongguo && state.Page > 1 {
+				result.HasMore = state.HasMore
+			}
 		}
 	} else {
 		items = mergeNativeCatalog(previous, result.Items)
+		if result.Page < state.Page {
+			result.Page, result.HasMore = state.Page, state.HasMore
+		}
 	}
 	if len(items) > 6000 {
 		items = items[:6000]
 	}
 	engine.catalogs[source] = items
-	state = nativeCatalogState{Page: result.Page, HasMore: result.HasMore}
+	if result.Warning != "" {
+		result.Page = max(1, state.Page)
+		result.HasMore = true
+	}
+	state.Page, state.HasMore = result.Page, result.HasMore
 	if result.Warning == "" {
 		state.UpdatedAt = time.Now()
 		result.Fresh = true

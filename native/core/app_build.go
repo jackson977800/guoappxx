@@ -37,8 +37,12 @@ func nativeDownloadAvailable(job nativeDownloadJob) bool {
 
 func nativeAuthorizeInput(input nativeInput) error {
 	switch input.Action {
-	case "catalog", "cached":
+	case "catalog", "cached", "sourceStatus", "sourceJob", "cancelSourceJob":
 		if !nativeSourceAvailable(input.Source) {
+			return errNativeBuildSource
+		}
+		if input.Action == "sourceJob" && input.Drama.ID != "" &&
+			(!nativeDramaAvailable(input.Drama) || sourceFromDramaID(input.Drama.ID) != canonicalProviderSource(input.Source)) {
 			return errNativeBuildSource
 		}
 	case "cover", "detail", "resolve", "enqueueDownloads", "localPlayback":

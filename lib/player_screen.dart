@@ -17,6 +17,7 @@ import 'playback_recovery.dart';
 import 'player_controls.dart';
 import 'television_controls.dart';
 import 'widgets.dart';
+import 'sources_screen.dart';
 
 class PlayerScreen extends StatefulWidget {
   const PlayerScreen({
@@ -785,6 +786,14 @@ class _PlayerScreenState extends State<PlayerScreen>
                       onPressed: _switchOnline,
                       icon: const Icon(Icons.cloud_outlined),
                       label: const Text('改为在线播放'),
+                    )
+                  : !_localFailure &&
+                        !widget.localOnly &&
+                        widget.repository.supportsSourceManagement
+                  ? SourceDiagnosticsButton(
+                      repository: widget.repository,
+                      store: widget.store,
+                      drama: widget.detail.drama,
                     )
                   : null,
               icon: Icons.play_disabled_rounded,

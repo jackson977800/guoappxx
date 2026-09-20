@@ -258,14 +258,16 @@ func (stream *nativeStreamServer) nativeServe(writer http.ResponseWriter, reques
 			upstream.Header.Set(name, value)
 		}
 	}
-	response, err := stream.downloader.client.Do(upstream)
+	response, err := stream.downloader.doMediaRequest(upstream)
 	if err != nil {
 		http.Error(writer, "读取媒体失败，请重试", http.StatusBadGateway)
 		return
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusPartialContent {
-		http.Error(writer, fmt.Sprintf("媒体 HTTP %d", response.StatusCode), response.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+		err := stream.downloader.catalogResponseError(upstream, response, body)
+		http.Error(writer, err.Error(), response.StatusCode)
 		return
 	}
 	contentType := strings.ToLower(response.Header.Get("Content-Type"))

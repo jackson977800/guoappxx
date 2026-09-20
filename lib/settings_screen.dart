@@ -12,6 +12,7 @@ import 'background_downloads.dart';
 import 'local_store.dart';
 import 'profiles_screen.dart';
 import 'app_build.dart';
+import 'sources_screen.dart';
 
 String storageSize(int bytes) {
   if (bytes < 0) return '暂不可用';
@@ -136,6 +137,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              if (widget.repository.supportsSourceManagement)
+                ListTile(
+                  leading: const Icon(Icons.dns_outlined),
+                  title: const Text('站源管理'),
+                  subtitle: const Text('独立更新、连接与播放检测'),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute<void>(
+                      builder: (_) => SourcesScreen(
+                        repository: widget.repository,
+                        store: widget.store,
+                      ),
+                    ),
+                  ),
+                ),
               ListTile(
                 key: const ValueKey('theme-setting'),
                 leading: const Icon(Icons.palette_outlined),

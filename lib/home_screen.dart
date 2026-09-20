@@ -15,6 +15,7 @@ import 'widgets.dart';
 import 'settings_screen.dart';
 import 'profiles_screen.dart';
 import 'search_input.dart';
+import 'sources_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.repository, required this.store});
@@ -39,6 +40,42 @@ class _HomeScreenState extends State<HomeScreen> {
   int _tab = 0;
   String _submittedQuery = '';
   bool _failedMore = false;
+
+  Future<void> _manageSources() async {
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => SourcesScreen(
+          repository: widget.repository,
+          store: widget.store,
+          initialSource: _source.id,
+        ),
+      ),
+    );
+    if (!mounted || _source.onlineSearch && _submittedQuery.isNotEmpty) return;
+    final source = _source.id;
+    final generation = ++_generation;
+    try {
+      final cached = await widget.repository.cached(source);
+      if (!mounted || generation != _generation || source != _source.id) return;
+      setState(() {
+        if (cached.items.isNotEmpty) {
+          _items = cached.items;
+          _page = cached.page;
+          _hasMore = cached.hasMore;
+        }
+        _loading = false;
+        _loadingMore = false;
+      });
+    } catch (_) {
+      if (mounted && generation == _generation) {
+        setState(() {
+          _loading = false;
+          _loadingMore = false;
+        });
+      }
+    }
+  }
 
   Future<void> _chooseDisplayMode() async {
     final selection = await showDialog<String>(
@@ -305,7 +342,9 @@ class _HomeScreenState extends State<HomeScreen> {
               PopupMenuButton<String>(
                 tooltip: '更多',
                 onSelected: (value) {
-                  if (value == 'settings') {
+                  if (value == 'sources') {
+                    _manageSources();
+                  } else if (value == 'settings') {
                     Navigator.push(
                       context,
                       MaterialPageRoute<void>(
@@ -341,6 +380,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   }
                 },
                 itemBuilder: (_) => [
+                  if (widget.repository.supportsSourceManagement)
+                    const PopupMenuItem(value: 'sources', child: Text('站源管理')),
                   const PopupMenuItem(value: 'users', child: Text('用户管理')),
                   const PopupMenuItem(value: 'settings', child: Text('设置与备份')),
                   const PopupMenuItem(value: 'display', child: Text('界面模式')),
@@ -625,6 +666,12 @@ class _HomeScreenState extends State<HomeScreen> {
                       : () => _load(more: _failedMore, force: true),
                   child: const Text('重试'),
                 ),
+                if (widget.repository.supportsSourceManagement)
+                  IconButton(
+                    tooltip: '站源诊断',
+                    onPressed: _manageSources,
+                    icon: const Icon(Icons.network_check),
+                  ),
               ],
             ),
           ),
@@ -645,6 +692,12 @@ class _HomeScreenState extends State<HomeScreen> {
                   title: '暂时无法加载',
                   message: _error!,
                   onRetry: () => _load(force: true),
+                  secondaryAction: widget.repository.supportsSourceManagement
+                      ? TextButton(
+                          onPressed: _manageSources,
+                          child: const Text('站源诊断'),
+                        )
+                      : null,
                   icon: Icons.wifi_off_rounded,
                 )
               : items.isEmpty
