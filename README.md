@@ -1,6 +1,6 @@
 # 红果鉴 / 真果鉴
 
-Flutter 多端独立短剧应用，原名“短剧库 APP”。站源请求、解析、下载和播放均在设备上完成，不依赖旧项目或自建服务。当前版本：**0.2.5+11**。
+Flutter 多端独立短剧应用，原名“短剧库 APP”。站源请求、解析、下载和播放均在设备上完成，不依赖旧项目或自建服务。当前版本：**0.2.6+12**。
 
 | 编译方式 | 应用名称 | 可用站源 |
 | --- | --- | --- |
@@ -145,6 +145,8 @@ exports/
 | Windows 10/11 x64 | 完整 ZIP 解压后运行 `hongguojian.exe`，全站源版为 `zhenguojian.exe`，保留所有 DLL 和 `data`；完整包运行需 Windows / Actions |
 | Android TV | 与手机共用 APK，电视界面与遥控已覆盖自动化；待电视实机验收 |
 | iOS 15.1+ | 已加入工程、Go 核心链接、媒体依赖、文件管理和构建脚本；待 Xcode 构建与真机验收，没有已签名 IPA |
+
+从 0.2.6 起，Android APK 默认压缩原生 `.so` 库，对红果版和全站源版同时生效。系统在安装时解压原生库后加载，缩小安装包下载体积；安装后仍需保留解压后的原生库空间。
 
 `INSTALL_FAILED_NO_MATCHING_ABIS` 表示 APK 与设备架构不匹配，请更换对应架构安装包。
 
@@ -371,13 +373,22 @@ git switch -c restore-v0.2.3 v0.2.3
 
 ### 当前检查与平台状态
 
+0.2.6 已完成红果鉴 / 真果鉴两份 ARM64 Release 构建。每份 APK 的 17 个原生库均采用 ZIP DEFLATE 压缩，最终清单已启用安装时解压；包 CRC、ZIP 对齐、应用名称、版本、签名和内置核心对比均通过。两份签名与 0.2.5 一致。全站源包由 67.4 MB 缩小到 30.1 MB，减少约 55.3%；第三方原生库解压后的内容与 0.2.5 一致。记录在 `build/sources-026/`。
+
 0.2.5 已通过 Dart 格式与静态检查、5 项定向 Go 检查（含竞态检测）和 1 项分类界面检查，覆盖分类分页 / 缓存隔离、旧 API 单剧 404、封面地址与合成解码、密钥 EOF 后备用 DNS 连接，以及分组切换和过期分类响应隔离。按用户要求不运行整套回归，记录在 `build/sources-025/`。
 
-本轮线上文本检查取得黄果视频和旧版的实际分类；旧版独立更新成功，返回 100 部剧，全部封面 URL 已避免误用视频 CDN。仅核对地址元数据，封面解码只用合成图片，未请求站源图片。记录在 `build/sources-025/live-fixes.log`。
+0.2.5 线上文本检查取得黄果视频和旧版的实际分类；旧版独立更新成功，返回 100 部剧，全部封面 URL 已避免误用视频 CDN。仅核对地址元数据，封面解码只用合成图片，未请求站源图片。记录在 `build/sources-025/live-fixes.log`。
 
 黄果 AI 截图同剧《神瞳觉醒 第一季》的目录、21 集分集与 M3U8 均正常，但密钥请求仍在 TLS 握手时断开；换用备用公网地址及浏览器兼容连接后仍失败，没有证明媒体可播放。诊断记录在 `build/sources-025/key-probe.log`、`asset-probe.log` 和 `alias-probe.log`。此前 0.2.4 黄果视频“母女日常”的目录、分集、播放列表、密钥和媒体连接抽样通过，记录在 `build/sources-024/live-huangguo.log`；该结果不能代表黄果 AI 或 Android 实机播放。
 
-本轮已生成全站源 ARM64 Release 安装包：`dist/android/zhenguojian-0.2.5+11-arm64-v8a.apk`（约 67 MB）。已核对版本号、应用名、签名和内置原生库；签名与 0.2.4 一致，可覆盖升级。其余版本 / 架构的构建开关和脚本保留，本轮不重复构建。最终构建日志在 `build/sources-025/release-arm64.log`，包校验记录在 `build/sources-025/apk-verification.log`。
+本轮交付两份 0.2.6+12 ARM64 Release 安装包，可覆盖升级：
+
+| 版本 | 安装包 | 大小 |
+| --- | --- | --- |
+| 红果鉴，仅红果 | `dist/android/hongguojian-0.2.6+12-arm64-v8a.apk` | 30.1 MB |
+| 真果鉴，全部站源 | `dist/android/zhenguojian-0.2.6+12-arm64-v8a.apk` | 30.1 MB |
+
+构建日志为 `build/sources-026/release-default-arm64.log` 和 `release-arm64.log`，包校验记录为同目录的 `apk-default-verification.log` 和 `apk-verification.log`。其他架构的构建开关和脚本保留，本轮未生成其他架构安装包。
 
 按用户要求，由用户自行安装体验，不执行手机 / 电视实机测试或启动模拟器。Windows 完整包需 Windows / Actions；本机缺少 iPhoneOS SDK，iOS 尚未完成 Xcode 构建，也没有已签名 IPA。本轮不运行远程 Actions，不请求或处理站源图片。
 
