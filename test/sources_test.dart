@@ -134,6 +134,106 @@ void main() {
     },
   );
 
+  for (final operation in ['check', 'checkCatalog']) {
+    testWidgets(
+      'source diagnostics remain collapsed through $operation polling and completion',
+      (tester) async {
+        SharedPreferences.setMockInitialValues({});
+        final store = LocalStore(await SharedPreferences.getInstance());
+        SourceStatus status(String state, {bool running = false}) =>
+            SourceStatus.fromJson({
+              'source': 'hongguo',
+              'count': 7,
+              'operation': operation,
+              'running': running,
+              'stage': running ? '检测连接' : '检测完成',
+              'health': {
+                'state': state,
+                'checkedAt': '2026-09-21T00:00:00Z',
+                'sample': '合成检测剧集',
+                'steps': [
+                  {
+                    'name': '入口与目录',
+                    'state': 'ok',
+                    'message': '目录可达',
+                    'httpStatus': 200,
+                  },
+                ],
+              },
+            });
+        final repository = SourceFixtureRepository()
+          ..statuses['hongguo'] = status('ok')
+          ..pending = Completer<SourceStatus>();
+        await tester.pumpWidget(
+          MaterialApp(
+            home: SourcesScreen(repository: repository, store: store),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final toggle = find.byKey(const ValueKey('health-toggle-hongguo'));
+        final sample = find.text('检测剧集：合成检测剧集');
+        expect(toggle, findsOneWidget);
+        expect(sample, findsNothing);
+        expect(find.byTooltip('复制诊断信息'), findsOneWidget);
+
+        if (operation == 'check') {
+          await tester.tap(find.byKey(const ValueKey('check-hongguo')));
+        } else {
+          await tester.tap(find.byTooltip('红果更多操作'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('仅检测目录'));
+        }
+        await tester.pump();
+        expect(repository.operations, ['hongguo:$operation']);
+        expect(sample, findsOneWidget);
+        await tester.ensureVisible(toggle);
+        await tester.tap(toggle);
+        await tester.pump();
+        expect(sample, findsNothing);
+
+        final checking = status('checking', running: true);
+        repository.statuses['hongguo'] = checking;
+        repository.pending!.complete(checking);
+        repository.pending = null;
+        await tester.pump();
+        expect(find.text('检测中'), findsOneWidget);
+        expect(sample, findsNothing);
+
+        final requests = repository.statusRequests.length;
+        await tester.pump(const Duration(seconds: 2));
+        await tester.pump();
+        expect(repository.statusRequests.length, greaterThan(requests));
+        expect(sample, findsNothing);
+
+        repository.statuses['hongguo'] = status(
+          operation == 'check' ? 'ok' : 'catalogOnly',
+        );
+        await tester.pump(const Duration(seconds: 2));
+        await tester.pumpAndSettle();
+        expect(
+          find.text(operation == 'check' ? '连接检测通过' : '目录正常 · 播放未检测'),
+          findsOneWidget,
+        );
+        expect(sample, findsNothing);
+
+        await tester.tap(toggle);
+        await tester.pumpAndSettle();
+        expect(sample, findsOneWidget);
+        expect(find.text('入口与目录：目录可达'), findsOneWidget);
+        await tester.tap(toggle);
+        await tester.pumpAndSettle();
+        expect(sample, findsNothing);
+        await tester.pump(const Duration(seconds: 10));
+        await tester.pump();
+        expect(sample, findsNothing);
+        expect(find.byTooltip('复制诊断信息'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+        store.dispose();
+      },
+    );
+  }
+
   testWidgets(
     'source diagnostics distinguish CF playback failure on a narrow screen',
     (tester) async {
@@ -184,8 +284,17 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.textContaining('检测未通过'), findsOneWidget);
+      expect(find.textContaining('HTTP 403'), findsNothing);
+      final toggle = find.byKey(const ValueKey('health-toggle-hongguo'));
+      await tester.ensureVisible(toggle);
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
       expect(find.textContaining('HTTP 403'), findsOneWidget);
       expect(find.textContaining('连接检测通过'), findsNothing);
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('HTTP 403'), findsNothing);
+      expect(find.textContaining('检测未通过'), findsOneWidget);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
       store.dispose();

@@ -38,6 +38,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
   final _errors = <String, String>{};
   final _pending = <String>{};
   final _revisions = <String, int>{};
+  final _expandedHealth = <String>{};
   Timer? _timer;
   bool _polling = false;
   int _ticks = 0;
@@ -106,6 +107,9 @@ class _SourcesScreenState extends State<SourcesScreen> {
       _pending.add(source.id);
       _errors.remove(source.id);
       _revisions[source.id] = (_revisions[source.id] ?? 0) + 1;
+      if (operation == 'check' || operation == 'checkCatalog') {
+        _expandedHealth.add(source.id);
+      }
     });
     try {
       final status = operation == 'cancel'
@@ -225,6 +229,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
         !busy && seconds == 0 && widget.repository.supportsSourceManagement;
     final error = _errors[source.id] ?? status?.error ?? '';
     final health = status?.health;
+    final healthExpanded = _expandedHealth.contains(source.id);
     final colors = Theme.of(context).colorScheme;
     return Card(
       key: ValueKey('source-${source.id}'),
@@ -333,8 +338,52 @@ class _SourcesScreenState extends State<SourcesScreen> {
               Row(
                 children: [
                   Expanded(
-                    child: Text(
-                      '${health.label} · ${sourceTimestamp(health.checkedAt)}',
+                    child: Semantics(
+                      expanded: healthExpanded,
+                      child: Tooltip(
+                        message: healthExpanded ? '收起检测详情' : '展开检测详情',
+                        child: TextButton(
+                          key: ValueKey('health-toggle-${source.id}'),
+                          onPressed: () => setState(() {
+                            if (healthExpanded) {
+                              _expandedHealth.remove(source.id);
+                            } else {
+                              _expandedHealth.add(source.id);
+                            }
+                          }),
+                          style: TextButton.styleFrom(
+                            foregroundColor: colors.onSurface,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 4,
+                              vertical: 8,
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(health.label),
+                                    Text(
+                                      sourceTimestamp(health.checkedAt),
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.bodySmall,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Icon(
+                                healthExpanded
+                                    ? Icons.expand_less_rounded
+                                    : Icons.expand_more_rounded,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                   IconButton(
@@ -344,39 +393,41 @@ class _SourcesScreenState extends State<SourcesScreen> {
                   ),
                 ],
               ),
-              if (health.sample.isNotEmpty) Text('检测剧集：${health.sample}'),
-              for (final step in health.steps)
-                Padding(
-                  padding: const EdgeInsets.only(top: 10),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(
-                        step.state == 'ok'
-                            ? Icons.check_circle_outline
-                            : Icons.error_outline,
-                        size: 20,
-                        color: step.state == 'ok'
-                            ? colors.primary
-                            : colors.error,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('${step.name}：${step.message}'),
-                            if (step.host.isNotEmpty || step.httpStatus > 0)
-                              Text(
-                                '${step.host}${step.httpStatus > 0 ? ' · HTTP ${step.httpStatus}' : ''} · ${step.elapsedMs} ms',
-                                style: Theme.of(context).textTheme.bodySmall,
-                              ),
-                          ],
+              if (healthExpanded) ...[
+                if (health.sample.isNotEmpty) Text('检测剧集：${health.sample}'),
+                for (final step in health.steps)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 10),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          step.state == 'ok'
+                              ? Icons.check_circle_outline
+                              : Icons.error_outline,
+                          size: 20,
+                          color: step.state == 'ok'
+                              ? colors.primary
+                              : colors.error,
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('${step.name}：${step.message}'),
+                              if (step.host.isNotEmpty || step.httpStatus > 0)
+                                Text(
+                                  '${step.host}${step.httpStatus > 0 ? ' · HTTP ${step.httpStatus}' : ''} · ${step.elapsedMs} ms',
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
+              ],
             ] else ...[
               const SizedBox(height: 12),
               const Text('尚未检测连接'),
