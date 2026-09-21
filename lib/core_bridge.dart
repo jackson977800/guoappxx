@@ -15,6 +15,7 @@ import 'app_build.dart';
 import 'source_status.dart';
 import 'ranking_models.dart';
 import 'cover_decoder.dart';
+import 'catalog_updates.dart';
 
 typedef _NativeRequest = Pointer<Utf8> Function(Pointer<Utf8>);
 typedef _DartRequest = Pointer<Utf8> Function(Pointer<Utf8>);
@@ -63,6 +64,16 @@ class AppFailure implements Exception {
 }
 
 abstract class AppRepository {
+  final catalogUpdates = CatalogUpdates();
+  Future<void> cancelCatalog() async {}
+  Future<void> cancelSuggestions() async {}
+  Future<void> cancelRecommendations() async {}
+  Future<Drama?> supplementMetadata(Drama drama) async => null;
+  Future<CatalogPage> recommendations(
+    String genre, {
+    bool more = false,
+    bool force = false,
+  }) async => throw AppFailure('当前环境不支持红果推荐');
   Future<List<RankingBoard>> rankingBoards() async => const [];
   Future<RankingPage> rankings(
     String board, {
@@ -127,6 +138,80 @@ class NativeRepository extends AppRepository {
   NativeRepository({this.background = false});
   final bool background;
   LocalStore? access;
+  final _readOwner = DateTime.now().microsecondsSinceEpoch.toString();
+  int _readSequence = 0;
+  final _activeReads = <String, int>{};
+
+  Future<Map<String, dynamic>> _read(
+    String scope,
+    Map<String, dynamic> input,
+  ) async {
+    final sequence = ++_readSequence;
+    _activeReads[scope] = sequence;
+    try {
+      return await _call({
+        ...input,
+        'session': '$_readOwner:$scope',
+        'sequence': sequence,
+      });
+    } finally {
+      if (_activeReads[scope] == sequence) _activeReads.remove(scope);
+    }
+  }
+
+  Future<void> _cancelReads(String prefix) async {
+    final reads = _activeReads.entries
+        .where((entry) => entry.key.startsWith(prefix))
+        .toList();
+    await Future.wait(
+      reads.map((entry) async {
+        try {
+          await _call({
+            'action': 'cancelRead',
+            'session': '$_readOwner:${entry.key}',
+            'sequence': entry.value,
+          });
+        } catch (_) {}
+      }),
+    );
+  }
+
+  @override
+  Future<void> cancelCatalog() => _cancelReads('catalog-');
+  @override
+  Future<void> cancelSuggestions() => _cancelReads('suggestions');
+  @override
+  Future<void> cancelRecommendations() => _cancelReads('recommendations-');
+
+  @override
+  Future<CatalogPage> recommendations(
+    String genre, {
+    bool more = false,
+    bool force = false,
+  }) async {
+    _authorize('hongguo');
+    return CatalogPage.fromJson(
+      await _read('recommendations-$genre', {
+        'action': 'recommendations',
+        'category': genre,
+        'command': more ? 'more' : '',
+        'force': force,
+      }),
+    );
+  }
+
+  @override
+  Future<Drama?> supplementMetadata(Drama drama) async {
+    if (!(drama.source == 'hongguo' && drama.onlineDate.isEmpty ||
+        drama.source == 'huangdou' &&
+            (drama.heat.isEmpty || drama.vipStatus == null)))
+      return null;
+    final result = await _read('metadata', {
+      'action': 'metadata',
+      'drama': drama.toJson(),
+    });
+    return Drama.fromJson(Map<String, dynamic>.from(result['drama'] as Map));
+  }
 
   @override
   bool get supportsSourceManagement => true;
@@ -214,7 +299,10 @@ class NativeRepository extends AppRepository {
   @override
   Future<List<String>> suggestions(String query) async {
     _authorize('hongguo');
-    final result = await _call({'action': 'suggestions', 'query': query});
+    final result = await _read('suggestions', {
+      'action': 'suggestions',
+      'query': query,
+    });
     return (result['items'] as List? ?? []).whereType<String>().toList();
   }
 
@@ -261,12 +349,22 @@ class NativeRepository extends AppRepository {
     try {
       final action = input['action'] as String;
       final unrestricted =
-          {'initialize', 'release', 'cancelPlayback'}.contains(action) ||
+          {
+            'initialize',
+            'release',
+            'cancelPlayback',
+            'cancelRead',
+          }.contains(action) ||
           action == 'workLease' && input['command'] == 'end';
       final epoch = access?.profileEpoch;
       if (!unrestricted && access?.locked == true) throw AppFailure('请先解锁当前用户');
       if (action == 'rankings') {
         _authorize(RankingBoard.sourceForID(input['board'] as String));
+      }
+      if (action == 'recommendations' ||
+          action == 'cachedRecommendations' ||
+          action == 'suggestions') {
+        _authorize('hongguo');
       }
       if ({
         'catalog',
@@ -282,6 +380,7 @@ class NativeRepository extends AppRepository {
         'cover',
         'prepareCover',
         'detail',
+        'metadata',
         'resolve',
         'enqueueDownloads',
         'localPlayback',
@@ -330,6 +429,23 @@ class NativeRepository extends AppRepository {
     } on AppFailure {
       rethrow;
     } on TimeoutException {
+      if (input['session'] is String &&
+          input['sequence'] is int &&
+          {
+            'catalog',
+            'categories',
+            'suggestions',
+            'recommendations',
+            'metadata',
+          }.contains(input['action'])) {
+        unawaited(
+          _call({
+            'action': 'cancelRead',
+            'session': input['session'],
+            'sequence': input['sequence'],
+          }).catchError((Object _) => <String, dynamic>{}),
+        );
+      }
       throw AppFailure('站源响应超时，请重试');
     } catch (_) {
       throw AppFailure('本地核心加载失败，请使用完整安装包重新安装');
@@ -354,7 +470,7 @@ class NativeRepository extends AppRepository {
     String source, {
     bool force = false,
   }) async {
-    final result = await _call({
+    final result = await _read('categories-$source', {
       'action': 'categories',
       'source': source,
       'force': force,
@@ -373,7 +489,7 @@ class NativeRepository extends AppRepository {
     String category = '',
     bool force = false,
   }) async => CatalogPage.fromJson(
-    await _call({
+    await _read('catalog-$source', {
       'action': 'catalog',
       'source': source,
       'page': page,

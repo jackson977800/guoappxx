@@ -149,6 +149,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
       }
     }
     if (status.error.isNotEmpty) text.writeln(status.error);
+    if (status.storageError.isNotEmpty) text.writeln(status.storageError);
     await Clipboard.setData(ClipboardData(text: text.toString()));
     if (mounted) {
       ScaffoldMessenger.of(
@@ -292,6 +293,12 @@ class _SourcesScreenState extends State<SourcesScreen> {
                       child: const Text('继续加载一页'),
                     ),
                     const PopupMenuItem(value: 'metadata', child: Text('补齐资料')),
+                    if (source.id == 'huangdou')
+                      PopupMenuItem(
+                        value: 'vipMetadata',
+                        enabled: (status?.unknownVip ?? 0) > 0,
+                        child: Text('补齐 VIP 资料（${status?.unknownVip ?? 0} 部）'),
+                      ),
                     const PopupMenuItem(
                       value: 'checkCatalog',
                       child: Text('仅检测目录'),
@@ -331,6 +338,28 @@ class _SourcesScreenState extends State<SourcesScreen> {
                 child: SelectableText(
                   error,
                   style: TextStyle(color: colors.error),
+                ),
+              ),
+            if (status != null && status.storageError.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      status.storageError,
+                      style: TextStyle(color: colors.error),
+                    ),
+                    TextButton.icon(
+                      key: ValueKey('save-${source.id}'),
+                      onPressed:
+                          !busy && widget.repository.supportsSourceManagement
+                          ? () => _run(source, 'retrySave')
+                          : null,
+                      icon: const Icon(Icons.save_outlined),
+                      label: const Text('重试保存'),
+                    ),
+                  ],
                 ),
               ),
             if (health != null) ...[

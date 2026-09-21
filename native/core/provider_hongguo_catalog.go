@@ -103,7 +103,7 @@ func (downloader *Downloader) fetchHongguoAppCatalogCategory(ctx context.Context
 			}
 			active = true
 			cursor := scan.cursor
-			if time.Since(cursor.UpdatedAt) > 30*time.Minute {
+			if age := time.Since(cursor.UpdatedAt); age < 0 || age > 30*time.Minute {
 				cursor.SessionID = ""
 			}
 			payload := map[string]any{
@@ -232,10 +232,17 @@ func parseHongguoCatalogPage(result map[string]any, cursor hongguoCatalogCursor,
 	if hasMore && (len(items) == 0 || next <= cursor.Offset || next > 1_000_000 || signature == cursor.PageSignature) {
 		return items, cursor, errors.New("App 分页未前进，已保留上次位置")
 	}
+	if !hasMore && (next < cursor.Offset || next > 1_000_000) {
+		next = cursor.Offset
+	}
+	session := mapString(data, "session_id")
+	if len(session) > 4096 || strings.ContainsAny(session, "\r\n\x00") {
+		return items, cursor, errors.New("App 分页会话无效，已保留上次位置")
+	}
 	cursor.Exhausted = !hasMore
 	cursor.Initialized = true
 	cursor.Offset = next
-	cursor.SessionID = mapString(data, "session_id")
+	cursor.SessionID = session
 	cursor.LastID = lastID
 	cursor.PageSignature = signature
 	cursor.UpdatedAt = time.Now()

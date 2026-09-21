@@ -119,7 +119,7 @@ func (engine *nativeEngine) checkSource(ctx context.Context, source string, sele
 	if drama.ID == "" {
 		drama = page.Items[0]
 		for _, item := range page.Items {
-			if !item.VIP {
+			if item.VIP == nil || !*item.VIP {
 				drama = item
 				break
 			}

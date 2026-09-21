@@ -45,6 +45,7 @@ class SourceStatus {
   SourceStatus.fromJson(Map<String, dynamic> json)
     : source = json['source'] as String? ?? '',
       count = intValue(json['count']),
+      unknownVip = intValue(json['unknownVip']),
       page = intValue(json['page']),
       hasMore = json['hasMore'] == true,
       updatedAt = sourceTime(json['updatedAt']),
@@ -55,6 +56,7 @@ class SourceStatus {
       total = intValue(json['total']),
       added = intValue(json['added']),
       error = json['error'] as String? ?? '',
+      storageError = json['storageError'] as String? ?? '',
       finishedAt = sourceTime(json['finishedAt']),
       retryAt = sourceTime(json['retryAt']),
       health = json['health'] is Map
@@ -63,8 +65,8 @@ class SourceStatus {
             )
           : null;
 
-  final String source, operation, stage, error;
-  final int count, page, completed, total, added;
+  final String source, operation, stage, error, storageError;
+  final int count, page, completed, total, added, unknownVip;
   final bool hasMore, running;
   final DateTime? updatedAt, finishedAt, retryAt;
   final SourceHealth? health;

@@ -212,17 +212,23 @@ func (d *Downloader) GetHuangguoChapters(ctx context.Context, source, sourceID s
 }
 
 func (d *Downloader) fetchHuangguoAIChapters(ctx context.Context, sourceID string) (string, []Chapter, error) {
+	drama, chapters, err := d.fetchHuangguoAIDetail(ctx, sourceID)
+	return drama.DisplayTitle(), chapters, err
+}
+
+func (d *Downloader) fetchHuangguoAIDetail(ctx context.Context, sourceID string) (Drama, []Chapter, error) {
 	sourceID = strings.Trim(strings.TrimSpace(sourceID), "/")
 	sourceID = strings.TrimPrefix(sourceID, "detail/")
 	if sourceID == "" {
-		return "", nil, fmt.Errorf("empty huangguoai sourceID")
+		return Drama{}, nil, fmt.Errorf("empty huangguoai sourceID")
 	}
 	detailURL := strings.TrimRight(huangguoAIBaseURL, "/") + "/detail/" + url.PathEscape(sourceID) + "/"
 	body, err := d.fetchProviderText(ctx, detailURL, huangguoAIBaseURL+"/")
 	if err != nil {
-		return "", nil, err
+		return Drama{}, nil, err
 	}
-	title := firstNonEmpty(extractPageTitle(body), titleNearDetail(body, sourceID), "短剧")
+	drama := huangguoDetailMetadata(body, detailURL, sourceHuangguoAI, sourceID)
+	title := drama.DisplayTitle()
 	episodes := parseHuangguoAIEpisodes(body, detailURL, sourceID)
 	if len(episodes) == 0 {
 		if media := parseAIVideoURL(body, detailURL); media != "" {
@@ -230,7 +236,7 @@ func (d *Downloader) fetchHuangguoAIChapters(ctx context.Context, sourceID strin
 		}
 	}
 	if len(episodes) == 0 {
-		return title, nil, nil
+		return drama, nil, nil
 	}
 	var chapters []Chapter
 	for _, ep := range episodes {
@@ -250,13 +256,18 @@ func (d *Downloader) fetchHuangguoAIChapters(ctx context.Context, sourceID strin
 		chapters = append(chapters, Chapter{ID: providerChapterID(sourceHuangguoAI, sourceID, key), Source: sourceHuangguoAI, Title: chapterTitle, VideoURL: mediaURL, PageURL: ep.URL, CurrentEpisode: rawEpisode(idx)})
 	}
 	sortProviderChapters(chapters)
-	return title, uniqueChapters(chapters), nil
+	return drama, uniqueChapters(chapters), nil
 }
 
 func (d *Downloader) fetchHuangguoVideoChapters(ctx context.Context, sourceID string) (string, []Chapter, error) {
+	drama, chapters, err := d.fetchHuangguoVideoDetail(ctx, sourceID)
+	return drama.DisplayTitle(), chapters, err
+}
+
+func (d *Downloader) fetchHuangguoVideoDetail(ctx context.Context, sourceID string) (Drama, []Chapter, error) {
 	sourceID = strings.Trim(strings.TrimSpace(sourceID), "/")
 	if sourceID == "" {
-		return "", nil, fmt.Errorf("empty huangguo-video sourceID")
+		return Drama{}, nil, fmt.Errorf("empty huangguo-video sourceID")
 	}
 	detailPath := sourceID
 	if !strings.HasPrefix(detailPath, "series/") && !strings.HasPrefix(detailPath, "video/") {
@@ -265,9 +276,10 @@ func (d *Downloader) fetchHuangguoVideoChapters(ctx context.Context, sourceID st
 	detailURL := strings.TrimRight(huangguoVideoBaseURL, "/") + "/" + detailPath
 	body, err := d.fetchProviderText(ctx, detailURL, huangguoVideoBaseURL+"/")
 	if err != nil {
-		return "", nil, err
+		return Drama{}, nil, err
 	}
-	title := firstNonEmpty(extractPageTitle(body), "短剧")
+	drama := huangguoDetailMetadata(body, detailURL, sourceHuangguoVideo, sourceID)
+	title := drama.DisplayTitle()
 	var episodes []providerEpisode
 	if strings.HasPrefix(detailPath, "video/") {
 		if hls := parseDataHLS(body, detailURL); hls != "" {
@@ -299,7 +311,7 @@ func (d *Downloader) fetchHuangguoVideoChapters(ctx context.Context, sourceID st
 		chapters = append(chapters, Chapter{ID: providerChapterID(sourceHuangguoVideo, sourceID, key), Source: sourceHuangguoVideo, Title: chapterTitle, VideoURL: hlsURL, PageURL: ep.URL, CurrentEpisode: rawEpisode(idx)})
 	}
 	sortProviderChapters(chapters)
-	return title, uniqueChapters(chapters), nil
+	return drama, uniqueChapters(chapters), nil
 }
 
 func (d *Downloader) fetchProviderText(ctx context.Context, rawURL, referer string) (string, error) {

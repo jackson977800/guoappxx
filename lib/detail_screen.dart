@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -79,13 +81,16 @@ class _DetailScreenState extends State<DetailScreen> {
       if (!mounted || generation != _generation) {
         return;
       }
+      final merged = widget.repository.catalogUpdates
+          .current(widget.drama)
+          .merge(detail.drama);
       setState(() {
-        _detail = detail;
+        _detail = DramaDetail(merged, detail.episodes, warning: detail.warning);
         _loading = false;
       });
-      try {
-        await widget.store.refreshDrama(detail.drama);
-      } catch (_) {}
+      widget.repository.catalogUpdates.publish(merged, retryCover: true);
+      unawaited(_supplement(merged, generation));
+      await saveUserChange(context, () => widget.store.refreshDrama(merged));
     } catch (error) {
       if (!mounted || generation != _generation) {
         return;
@@ -94,7 +99,32 @@ class _DetailScreenState extends State<DetailScreen> {
         _error = error.toString();
         _loading = false;
       });
+      widget.repository.catalogUpdates.publish(
+        widget.repository.catalogUpdates.current(widget.drama),
+        retryCover: true,
+      );
     }
+  }
+
+  Future<void> _supplement(Drama drama, int generation) async {
+    try {
+      final fresh = await widget.repository.supplementMetadata(drama);
+      if (!mounted ||
+          generation != _generation ||
+          fresh == null ||
+          _detail == null)
+        return;
+      final updated = _detail!.drama.merge(fresh);
+      setState(() {
+        _detail = DramaDetail(
+          updated,
+          _detail!.episodes,
+          warning: _detail!.warning,
+        );
+      });
+      widget.repository.catalogUpdates.publish(updated);
+      await saveUserChange(context, () => widget.store.refreshDrama(updated));
+    } catch (_) {}
   }
 
   Future<void> _download() async {
@@ -234,7 +264,10 @@ class _DetailScreenState extends State<DetailScreen> {
             ),
             IconButton(
               tooltip: widget.store.isFavorite(drama.id) ? '取消追剧' : '加入追剧',
-              onPressed: () => widget.store.toggleFavorite(drama),
+              onPressed: () => saveUserChange(
+                context,
+                () => widget.store.toggleFavorite(drama),
+              ),
               icon: Icon(
                 widget.store.isFavorite(drama.id)
                     ? Icons.bookmark_rounded
@@ -301,6 +334,47 @@ class _DetailScreenState extends State<DetailScreen> {
                                           ),
                                         ),
                                       ],
+                                      if (drama.onlineDate.isNotEmpty ||
+                                          drama.heat.isNotEmpty ||
+                                          drama.views.isNotEmpty) ...[
+                                        const SizedBox(height: 8),
+                                        Text(
+                                          [
+                                            if (drama.onlineDate.isNotEmpty)
+                                              '${drama.onlineDate} 上线',
+                                            if (drama.heat.isNotEmpty)
+                                              '热度 ${drama.heat}',
+                                            if (drama.views.isNotEmpty)
+                                              '播放 ${drama.views}',
+                                          ].join(' · '),
+                                          style: Theme.of(
+                                            context,
+                                          ).textTheme.bodySmall,
+                                        ),
+                                      ],
+                                      if (drama.releaseStatus.isNotEmpty &&
+                                          drama.releaseStatus != 'unknown') ...[
+                                        const SizedBox(height: 8),
+                                        Text(
+                                          drama.releaseLabel,
+                                          style: Theme.of(
+                                            context,
+                                          ).textTheme.bodySmall,
+                                        ),
+                                      ],
+                                      if (drama.source == 'huangdou') ...[
+                                        const SizedBox(height: 8),
+                                        Text(
+                                          drama.vipStatus == null
+                                              ? 'VIP 状态待补齐'
+                                              : drama.vip
+                                              ? 'VIP 内容'
+                                              : '免费内容',
+                                          style: Theme.of(
+                                            context,
+                                          ).textTheme.bodySmall,
+                                        ),
+                                      ],
                                       const SizedBox(height: 18),
                                       FilledButton.icon(
                                         key: const ValueKey('start-play'),
@@ -326,6 +400,32 @@ class _DetailScreenState extends State<DetailScreen> {
                             ),
                           ),
                         ),
+                        if (_detail?.warning.isNotEmpty == true)
+                          SliverToBoxAdapter(
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+                              child: Text(
+                                _detail!.warning,
+                                style: TextStyle(
+                                  color: Theme.of(context).colorScheme.error,
+                                ),
+                              ),
+                            ),
+                          ),
+                        if (drama.tags.isNotEmpty)
+                          SliverToBoxAdapter(
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+                              child: Wrap(
+                                spacing: 6,
+                                runSpacing: 6,
+                                children: [
+                                  for (final tag in drama.tags)
+                                    Chip(label: Text(tag)),
+                                ],
+                              ),
+                            ),
+                          ),
                         if (drama.description.isNotEmpty)
                           SliverToBoxAdapter(
                             child: Padding(
@@ -537,7 +637,10 @@ class _DetailScreenState extends State<DetailScreen> {
                   icon: widget.store.isFavorite(drama.id)
                       ? Icons.bookmark_rounded
                       : Icons.bookmark_border_rounded,
-                  onPressed: () => widget.store.toggleFavorite(drama),
+                  onPressed: () => saveUserChange(
+                    context,
+                    () => widget.store.toggleFavorite(drama),
+                  ),
                 ),
               ],
             ),

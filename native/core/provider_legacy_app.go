@@ -75,14 +75,19 @@ func (d *Downloader) fetchLegacyCatalogCategoryPage(ctx context.Context, page in
 }
 
 func (d *Downloader) fetchLegacyChapters(ctx context.Context, sourceID string) (string, []Chapter, error) {
+	drama, chapters, err := d.fetchLegacyDetail(ctx, sourceID)
+	return drama.DisplayTitle(), chapters, err
+}
+
+func (d *Downloader) fetchLegacyDetail(ctx context.Context, sourceID string) (Drama, []Chapter, error) {
 	var detail detailResponse
 	if err := d.fetchAPI(ctx, "/api/app/playlet/detail/"+url.PathEscape(sourceID), nil, &detail); err != nil {
-		return "", nil, err
+		return Drama{}, nil, err
 	}
 	chapters := detail.Chapters
 	if len(chapters) == 0 {
 		if err := d.fetchAPI(ctx, "/api/app/playlet-chapter/list/"+url.PathEscape(sourceID), nil, &chapters); err != nil {
-			return "", nil, err
+			return Drama{}, nil, err
 		}
 	}
 	chapters = uniqueChapters(chapters)
@@ -97,7 +102,19 @@ func (d *Downloader) fetchLegacyChapters(ctx context.Context, sourceID string) (
 		chapter.Title = firstNonEmpty(chapter.Title, "第"+chapter.EpisodeString(index+1)+"集")
 	}
 	sortProviderChapters(chapters)
-	return firstNonEmpty(detail.Title, detail.Name, "短剧"), chapters, nil
+	drama := detail.Drama
+	drama.Title, drama.Name = detail.Title, detail.Name
+	if drama.ID != "" && drama.ID != sourceID && drama.ID != providerDramaID(sourceCloudFront, sourceID) {
+		return Drama{}, nil, errors.New("黄果旧版详情与请求剧集不符")
+	}
+	drama.ID, drama.Source, drama.SourceID = providerDramaID(sourceCloudFront, sourceID), sourceCloudFront, sourceID
+	for _, cover := range []any{drama.CoverURL, drama.CoverURLSnake, drama.Cover, drama.ImageURL, drama.ImageURLSnake, drama.Image, drama.Img, drama.Pic, drama.Poster} {
+		if address := legacyCoverURL(cover); address != "" {
+			drama.Cover, drama.CoverURL = address, address
+			break
+		}
+	}
+	return drama, chapters, nil
 }
 
 func (d *Downloader) resolveLegacyMedia(ctx context.Context, task Task) (providerMedia, error) {

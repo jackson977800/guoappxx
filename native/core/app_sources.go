@@ -23,30 +23,35 @@ type nativeSourceRecord struct {
 	Total           int                  `json:"total"`
 	Added           int                  `json:"added"`
 	Error           string               `json:"error,omitempty"`
+	NeedsSave       bool                 `json:"needsSave,omitempty"`
 	StartedAt       time.Time            `json:"startedAt"`
 	FinishedAt      time.Time            `json:"finishedAt"`
 	RetryAt         time.Time            `json:"retryAt"`
 	Health          *nativeSourceHealth  `json:"health,omitempty"`
 	MetadataChecked map[string]time.Time `json:"metadataChecked,omitempty"`
+	MetadataRetryAt map[string]time.Time `json:"metadataRetryAt,omitempty"`
+	MetadataCursor  string               `json:"metadataCursor,omitempty"`
 }
 
 type nativeSourceStatus struct {
-	Source     string              `json:"source"`
-	Count      int                 `json:"count"`
-	Page       int                 `json:"page"`
-	HasMore    bool                `json:"hasMore"`
-	UpdatedAt  time.Time           `json:"updatedAt"`
-	Operation  string              `json:"operation"`
-	Running    bool                `json:"running"`
-	Stage      string              `json:"stage"`
-	Completed  int                 `json:"completed"`
-	Total      int                 `json:"total"`
-	Added      int                 `json:"added"`
-	Error      string              `json:"error,omitempty"`
-	StartedAt  time.Time           `json:"startedAt"`
-	FinishedAt time.Time           `json:"finishedAt"`
-	RetryAt    time.Time           `json:"retryAt"`
-	Health     *nativeSourceHealth `json:"health,omitempty"`
+	UnknownVIP   int                 `json:"unknownVip"`
+	Source       string              `json:"source"`
+	Count        int                 `json:"count"`
+	Page         int                 `json:"page"`
+	HasMore      bool                `json:"hasMore"`
+	UpdatedAt    time.Time           `json:"updatedAt"`
+	Operation    string              `json:"operation"`
+	Running      bool                `json:"running"`
+	Stage        string              `json:"stage"`
+	Completed    int                 `json:"completed"`
+	Total        int                 `json:"total"`
+	Added        int                 `json:"added"`
+	Error        string              `json:"error,omitempty"`
+	StorageError string              `json:"storageError,omitempty"`
+	StartedAt    time.Time           `json:"startedAt"`
+	FinishedAt   time.Time           `json:"finishedAt"`
+	RetryAt      time.Time           `json:"retryAt"`
+	Health       *nativeSourceHealth `json:"health,omitempty"`
 }
 
 func (engine *nativeEngine) lockSourceCatalog(ctx context.Context, source string) (func(), error) {
@@ -73,7 +78,7 @@ func (engine *nativeEngine) loadSourceRecords() {
 	engine.sourceTasks = map[string]*nativeSourceTask{}
 	path := filepath.Join(engine.directory, "sources.json")
 	info, err := os.Stat(path)
-	if err != nil || info.Size() > 4<<20 {
+	if err != nil || info.Size() > nativeSourceMaxBytes {
 		return
 	}
 	body, err := os.ReadFile(path)
@@ -90,15 +95,31 @@ func (engine *nativeEngine) loadSourceRecords() {
 			record.Stage = "任务已中断"
 			record.Error = "上次任务未完成，已保留已更新内容，可重新开始"
 		}
+		if record.NeedsSave {
+			record.NeedsSave = false
+			record.Stage = "上次保存未完成"
+			record.Error = "已恢复可读取的缓存，请重新更新"
+			for key, state := range engine.catalogStates {
+				if key == source || strings.HasPrefix(key, source+"|") {
+					state.UpdatedAt = time.Time{}
+					engine.catalogStates[key] = state
+				}
+			}
+		}
 		engine.sourceRecords[source] = record
 	}
 }
 
-func (engine *nativeEngine) saveSourceRecordsLocked() {
+func (engine *nativeEngine) saveSourceRecordsLocked() error {
 	body, err := json.Marshal(engine.sourceRecords)
-	if err == nil && len(body) <= 4<<20 {
-		_ = writeNativeCacheFile(filepath.Join(engine.directory, "sources.json"), body)
+	if err == nil && len(body) > nativeSourceMaxBytes {
+		err = errNativeSourceLimit
 	}
+	if err == nil {
+		err = writeNativeCacheFile(filepath.Join(engine.directory, "sources.json"), body)
+	}
+	engine.sourceSaveError = nativeSaveError("站源任务记录", err)
+	return engine.sourceSaveError
 }
 
 func (engine *nativeEngine) sourceStatus(source string) nativeSourceStatus {
@@ -111,10 +132,24 @@ func (engine *nativeEngine) sourceStatus(source string) nativeSourceStatus {
 func (engine *nativeEngine) sourceStatusLocked(source string) nativeSourceStatus {
 	record := engine.sourceRecords[source]
 	state, found := engine.catalogStates[source]
-	return nativeSourceStatus{Source: source, Count: len(engine.catalogs[source]), Page: max(1, state.Page), HasMore: !found || state.HasMore,
-		UpdatedAt: state.UpdatedAt, Operation: record.Operation, Running: record.Running, Stage: record.Stage,
+	warning := engine.storageWarningLocked()
+	stage := record.Stage
+	unknownVIP := 0
+	if source == sourceHuangdou {
+		for _, drama := range engine.catalogs[source] {
+			if drama.VIP == nil {
+				unknownVIP++
+			}
+		}
+	}
+	if warning != "" && !record.Running && stage == "已完成" {
+		stage = "等待保存"
+	}
+	return nativeSourceStatus{Source: source, Count: len(engine.catalogs[source]), UnknownVIP: unknownVIP, Page: max(1, state.Page), HasMore: !found || state.HasMore,
+		UpdatedAt: state.UpdatedAt, Operation: record.Operation, Running: record.Running, Stage: stage,
 		Completed: record.Completed, Total: record.Total, Added: record.Added, Error: record.Error,
-		StartedAt: record.StartedAt, FinishedAt: record.FinishedAt, RetryAt: record.RetryAt, Health: record.Health}
+		StorageError: warning,
+		StartedAt:    record.StartedAt, FinishedAt: record.FinishedAt, RetryAt: record.RetryAt, Health: record.Health}
 }
 
 func (engine *nativeEngine) changeSourceRecord(source string, change func(*nativeSourceRecord)) {
@@ -135,12 +170,18 @@ func (engine *nativeEngine) startSourceTask(source, operation string, drama nati
 		return nativeSourceStatus{}, errNativeBuildSource
 	}
 	switch operation {
-	case "update", "more", "metadata", "check", "checkCatalog":
+	case "update", "more", "metadata", "vipMetadata", "check", "checkCatalog", "retrySave":
 	default:
 		return nativeSourceStatus{}, errors.New("无效的站源操作")
 	}
+	if operation == "vipMetadata" && source != sourceHuangdou {
+		return nativeSourceStatus{}, errors.New("当前站源不需要补齐 VIP 资料")
+	}
 	if drama.ID != "" && (!nativeDramaAvailable(drama) || sourceFromDramaID(drama.ID) != source) {
 		return nativeSourceStatus{}, errNativeBuildSource
+	}
+	if operation == "retrySave" {
+		return engine.retrySourceSave(source), nil
 	}
 	engine.mu.Lock()
 	if engine.sourceTasks == nil {
@@ -164,6 +205,7 @@ func (engine *nativeEngine) startSourceTask(source, operation string, drama nati
 	engine.sourceTasks[source] = task
 	previous.Operation, previous.Running, previous.Stage = operation, true, "准备中"
 	previous.Completed, previous.Total, previous.Added = 0, 0, 0
+	previous.NeedsSave = false
 	previous.Error, previous.StartedAt, previous.FinishedAt, previous.RetryAt = "", time.Now(), time.Time{}, time.Time{}
 	engine.sourceRecords[source] = previous
 	engine.saveSourceRecordsLocked()
@@ -201,6 +243,14 @@ func (engine *nativeEngine) runSourceTask(ctx context.Context, source, operation
 		record.Stage = "已完成"
 		if err != nil {
 			record.Stage, record.Error = "未完成", publicError(err).Error()
+			var persistence *nativePersistenceError
+			if errors.As(err, &persistence) {
+				record.NeedsSave, record.Error = engine.catalogSaveError != nil, ""
+				record.Stage = "已保存，可继续更新"
+				if record.NeedsSave {
+					record.Stage = "等待保存"
+				}
+			}
 			if errors.Is(err, context.Canceled) {
 				record.Stage, record.Error = "已停止", "已保留更新内容，可稍后继续"
 			}
@@ -237,6 +287,9 @@ func (engine *nativeEngine) updateSource(ctx context.Context, source, operation 
 			return err
 		}
 		if page.Warning != "" {
+			if page.saveError != nil {
+				return page.saveError
+			}
 			return errors.New(page.Warning)
 		}
 	}
@@ -253,6 +306,9 @@ func (engine *nativeEngine) updateSource(ctx context.Context, source, operation 
 				return err
 			}
 			if page.Warning != "" {
+				if page.saveError != nil {
+					return page.saveError
+				}
 				return errors.New(page.Warning)
 			}
 		}
@@ -264,14 +320,28 @@ func (engine *nativeEngine) updateSource(ctx context.Context, source, operation 
 	var pending []nativeDrama
 	engine.mu.Lock()
 	record := engine.sourceRecords[source]
-	for _, drama := range items {
+	start := 0
+	for index, drama := range items {
+		if drama.ID == record.MetadataCursor {
+			start = index + 1
+			break
+		}
+	}
+	for scanned := 0; scanned < len(items); scanned++ {
+		drama := items[(start+scanned)%len(items)]
 		if len(pending) >= 8 {
 			break
 		}
-		if time.Since(record.MetadataChecked[drama.ID]) < 24*time.Hour {
+		if operation == "vipMetadata" && drama.VIP != nil {
 			continue
 		}
-		if operation == "metadata" || drama.Episodes <= 0 || drama.Description == "" {
+		if operation != "vipMetadata" && time.Since(record.MetadataChecked[drama.ID]) < 24*time.Hour {
+			continue
+		}
+		if time.Now().Before(record.MetadataRetryAt[drama.ID]) {
+			continue
+		}
+		if operation == "metadata" || operation == "vipMetadata" || drama.Episodes <= 0 || drama.Description == "" || source == sourceHuangdou && drama.VIP == nil {
 			pending = append(pending, drama)
 		}
 	}
@@ -285,8 +355,14 @@ func (engine *nativeEngine) updateSource(ctx context.Context, source, operation 
 			return ctx.Err()
 		}
 		result, err := engine.nativeDetail(ctx, drama)
+		unknownVIP := false
 		if err == nil {
 			fresh := result.(map[string]any)["drama"].(nativeDrama)
+			var metadataErr error
+			if nativeNeedsExtraMetadata(fresh) {
+				fresh, metadataErr = engine.nativeExtraMetadata(ctx, fresh)
+			}
+			unknownVIP = source == sourceHuangdou && fresh.VIP == nil
 			engine.mu.Lock()
 			engine.catalogs[source] = mergeNativeCatalog(engine.catalogs[source], []nativeDrama{fresh})
 			for key, items := range engine.catalogs {
@@ -299,22 +375,43 @@ func (engine *nativeEngine) updateSource(ctx context.Context, source, operation 
 					}
 				}
 			}
-			body, marshalErr := json.Marshal(nativeCatalogDisk{Version: 2, Catalogs: engine.catalogs, States: engine.catalogStates, Categories: engine.categoryOptions})
-			if marshalErr == nil {
-				err = writeNativeCacheFile(filepath.Join(engine.directory, "catalogs.json"), body)
-			}
+			err = engine.writeCatalogDiskLocked()
 			engine.mu.Unlock()
+			if err == nil {
+				err = metadataErr
+			}
 		}
 		engine.changeSourceRecord(source, func(record *nativeSourceRecord) {
 			record.Completed = index + 1
+			record.MetadataCursor = drama.ID
 			if err == nil {
 				if record.MetadataChecked == nil {
 					record.MetadataChecked = map[string]time.Time{}
 				}
 				record.MetadataChecked[drama.ID] = time.Now()
+				delete(record.MetadataRetryAt, drama.ID)
+				if unknownVIP {
+					if record.MetadataRetryAt == nil {
+						record.MetadataRetryAt = map[string]time.Time{}
+					}
+					record.MetadataRetryAt[drama.ID] = time.Now().Add(5 * time.Minute)
+				}
+			} else if ctx.Err() == nil {
+				if record.MetadataRetryAt == nil {
+					record.MetadataRetryAt = map[string]time.Time{}
+				}
+				retry := 5 * time.Minute
+				if strings.Contains(err.Error(), "404") {
+					retry = 24 * time.Hour
+				}
+				record.MetadataRetryAt[drama.ID] = time.Now().Add(retry)
 			}
 		})
 		if err != nil {
+			var persistence *nativePersistenceError
+			if errors.As(err, &persistence) {
+				return err
+			}
 			failures = append(failures, err)
 			var backoff *requestBackoff
 			if errors.As(err, &backoff) || len(failures) >= 2 {

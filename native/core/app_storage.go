@@ -129,6 +129,10 @@ func (engine *nativeEngine) moveDownloads(ctx context.Context, parent string) er
 	defer engine.mu.Unlock()
 	target := filepath.Join(filepath.Clean(parent), "zhenguojian-downloads")
 	manager.mu.Lock()
+	if manager.loadErr != nil {
+		manager.mu.Unlock()
+		return errors.New("下载记录无法读取，已停止迁移并保留原索引和文件；请先恢复下载记录")
+	}
 	if manager.closed || manager.moving {
 		manager.mu.Unlock()
 		return errors.New("下载目录正在处理，请稍后重试")
@@ -174,13 +178,16 @@ func (engine *nativeEngine) moveDownloads(ctx context.Context, parent string) er
 		_ = os.RemoveAll(target)
 		return errors.New("文件迁移未完成，原文件已保留，请检查空间与目录权限")
 	}
+	if err := ctx.Err(); err != nil {
+		_ = os.RemoveAll(target)
+		return err
+	}
 	data, _ := json.Marshal(map[string]string{"directory": target})
 	if err := nativeDownloadWrite(filepath.Join(engine.directory, "download-location.json"), data); err != nil {
 		_ = os.RemoveAll(target)
 		return errors.New("保存下载目录失败，原文件已保留")
 	}
 	manager.root = target
-	manager.loadErr = nil
 	_ = os.RemoveAll(source)
 	return nil
 }

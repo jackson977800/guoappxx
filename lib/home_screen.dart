@@ -8,6 +8,9 @@ import 'app_bottom_navigation.dart';
 import 'core_bridge.dart';
 import 'catalog_filters.dart';
 import 'catalog_browser.dart';
+import 'catalog_sort.dart';
+import 'catalog_sort_sheet.dart';
+import 'recommendations_screen.dart';
 import 'rankings_screen.dart';
 import 'detail_screen.dart';
 import 'downloads_screen.dart';
@@ -33,6 +36,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final _scroll = ScrollController();
   Timer? _debounce;
   late SourceSite _source;
+  bool _allSources = false;
   List<Drama> _items = [];
   bool _loading = true;
   bool _loadingMore = false;
@@ -49,11 +53,20 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _categoriesError;
   int _categoryGeneration = 0;
 
-  List<SourceGroup> get _sourceGroups =>
-      SourceGroup.fromSources(widget.store.sources);
+  List<SourceGroup> get _sourceGroups {
+    final groups = SourceGroup.fromSources(widget.store.sources);
+    return [
+      if (groups.length > 1) SourceGroup('all', '全部站源', widget.store.sources),
+      ...groups,
+    ];
+  }
+
   SourceGroup get _group =>
-      _sourceGroups.where((group) => group.id == _source.groupId).firstOrNull ??
+      _sourceGroups
+          .where((group) => group.id == (_allSources ? 'all' : _source.groupId))
+          .firstOrNull ??
       SourceGroup(_source.groupId, _source.groupName, [_source]);
+  bool get _onlineSearch => _group.sources.any((source) => source.onlineSearch);
   String get _category => _categorySelections[_group.id] ?? '';
   List<CatalogCategory> get _categories => _browser.categories(_group);
 
@@ -86,7 +99,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _changeGroup(SourceGroup group) {
-    if (_source.groupId != group.id) _changeSource(group.sources.first);
+    if (_group.id != group.id)
+      _changeSource(group.sources.first, allSources: group.id == 'all');
   }
 
   void _changeCategory(String category) {
@@ -94,7 +108,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _debounce?.cancel();
     setState(() {
       _categorySelections[_group.id] = category;
-      if (_source.onlineSearch) {
+      if (_onlineSearch) {
         _search.clear();
         _submittedQuery = '';
       }
@@ -131,6 +145,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _openRankings() {
+    _pauseCatalog();
     Navigator.push<void>(
       context,
       MaterialPageRoute(
@@ -144,6 +159,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _manageSources() async {
+    _pauseCatalog();
     await Navigator.push<void>(
       context,
       MaterialPageRoute(
@@ -156,7 +172,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     if (!mounted) return;
     await _loadCategories();
-    if (mounted && (!_source.onlineSearch || _submittedQuery.isEmpty)) {
+    if (mounted && (!_onlineSearch || _submittedQuery.isEmpty)) {
       await _load(useCache: true);
     }
   }
@@ -190,7 +206,10 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
     if (selection != null && mounted) {
-      await widget.store.setDisplayMode(selection);
+      await saveUserChange(
+        context,
+        () => widget.store.setDisplayMode(selection),
+      );
     }
   }
 
@@ -199,20 +218,18 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       builder: (_) => TelevisionSearchDialog(
         initialValue: _search.text,
-        title: _source.onlineSearch ? '搜索红果短剧' : '筛选当前已加载短剧',
-        suggestions: _source.onlineSearch
-            ? widget.repository.suggestions
-            : null,
+        title: _group.id == 'all'
+            ? '搜索已开放站源'
+            : _onlineSearch
+            ? '搜索红果短剧'
+            : '筛选当前已加载短剧',
+        recentSearches: widget.store.recentSearches,
+        onCancel: () => unawaited(widget.repository.cancelSuggestions()),
+        suggestions: _onlineSearch ? widget.repository.suggestions : null,
       ),
     );
     if (query != null && mounted) {
-      _search.text = query;
-      _debounce?.cancel();
-      if (_source.onlineSearch) {
-        _load();
-      } else {
-        setState(() {});
-      }
+      _submitSearch(query);
     }
   }
 
@@ -229,7 +246,9 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _source = SourceSite.byId(widget.store.source);
+    _allSources = widget.store.catalogView.allSources;
     _browser = CatalogBrowser(widget.repository);
+    widget.repository.catalogUpdates.addListener(_metadataChanged);
     if (widget.store.sources.isNotEmpty) {
       _load(useCache: true);
       _loadCategories();
@@ -240,12 +259,27 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    widget.repository.catalogUpdates.removeListener(_metadataChanged);
     _generation++;
     _categoryGeneration++;
+    unawaited(_browser.cancel());
+    unawaited(widget.repository.cancelSuggestions());
     _debounce?.cancel();
     _search.dispose();
     _scroll.dispose();
     super.dispose();
+  }
+
+  void _metadataChanged() {
+    final drama = widget.repository.catalogUpdates.latest;
+    if (!mounted || drama == null) return;
+    _browser.updateDrama(drama);
+    setState(() {
+      _items = [
+        for (final item in _items)
+          item.id == drama.id ? item.merge(drama) : item,
+      ];
+    });
   }
 
   Future<void> _load({
@@ -256,7 +290,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (more && (_loading || _loadingMore || !_hasMore)) return;
     final generation = ++_generation;
     final group = _group;
-    final query = _source.onlineSearch ? _search.text.trim() : '';
+    final query = _onlineSearch ? _search.text.trim() : '';
     setState(() {
       _error = null;
       if (query.isNotEmpty) _categorySelections[group.id] = '';
@@ -303,20 +337,26 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  void _changeSource(SourceSite source) {
-    if (_source.id == source.id) {
+  void _changeSource(SourceSite source, {bool allSources = false}) {
+    if (_source.id == source.id && _allSources == allSources) {
       return;
     }
     _debounce?.cancel();
     _search.clear();
     setState(() {
       _source = source;
+      _allSources = allSources;
       _items = [];
       _hasMore = true;
       _submittedQuery = '';
       _error = null;
     });
-    widget.store.setSource(source.id);
+    unawaited(
+      saveUserChange(
+        context,
+        () => widget.store.setCatalogSource(source.id, allSources: allSources),
+      ),
+    );
     if (_scroll.hasClients) {
       _scroll.jumpTo(0);
     }
@@ -326,13 +366,47 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _searchChanged(String query) {
     _debounce?.cancel();
+    if (_onlineSearch && (_loading || _loadingMore)) {
+      _generation++;
+      unawaited(_browser.cancel());
+      _loading = _loadingMore = false;
+    }
     setState(() {});
-    if (_source.onlineSearch && query.trim().isEmpty) {
+    if (_onlineSearch && query.trim().isEmpty) {
       _debounce = Timer(const Duration(milliseconds: 300), () => _load());
     }
   }
 
+  void _submitSearch(String query) {
+    _search.text = query.trim();
+    _debounce?.cancel();
+    if (_search.text.isNotEmpty)
+      unawaited(
+        saveUserChange(
+          context,
+          () => widget.store.rememberSearch(_search.text),
+        ),
+      );
+    if (_onlineSearch) {
+      _load();
+    } else {
+      setState(() {});
+    }
+  }
+
+  Future<void> _chooseCatalogView() async {
+    final selected = await chooseCatalogView(context, widget.store.catalogView);
+    if (selected != null && mounted) {
+      await saveUserChange(
+        context,
+        () => widget.store.setCatalogView(selected),
+      );
+      if (mounted && _scroll.hasClients) _scroll.jumpTo(0);
+    }
+  }
+
   void _openDrama(Drama drama) {
+    _pauseCatalog();
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => DetailScreen(
@@ -344,24 +418,38 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  bool get _supportsVipFilter => _source.id == 'huangdou';
+  void _pauseCatalog() {
+    _generation++;
+    unawaited(_browser.cancel());
+    unawaited(widget.repository.cancelSuggestions());
+    setState(() {
+      _loading = false;
+      _loadingMore = false;
+    });
+  }
+
+  bool get _supportsVipFilter =>
+      _group.sources.any((source) => source.id == 'huangdou');
   bool get _hideVip => _supportsVipFilter && widget.store.hideVip;
 
   List<Drama> get _visible {
     final query = _search.text.trim().toLowerCase();
-    return _items.where((drama) {
-      if (!widget.store.allowsSource(drama.source)) return false;
-      if (_category.startsWith('local:') &&
-          categoryName(drama.category) != _category.substring(6)) {
-        return false;
-      }
-      if (_hideVip && drama.vip) {
-        return false;
-      }
-      return _source.onlineSearch ||
-          query.isEmpty ||
-          ('${drama.title} ${drama.description}').toLowerCase().contains(query);
-    }).toList();
+    return sortCatalog(
+      _items.where((drama) {
+        if (!widget.store.allowsSource(drama.source)) return false;
+        if (_category.startsWith('local:') &&
+            categoryName(drama.category) != _category.substring(6)) {
+          return false;
+        }
+        if (_hideVip && drama.source == 'huangdou' && drama.vip) {
+          return false;
+        }
+        return _onlineSearch ||
+            query.isEmpty ||
+            matchesDramaQuery(drama, query);
+      }),
+      widget.store.catalogView,
+    );
   }
 
   @override
@@ -448,7 +536,18 @@ class _HomeScreenState extends State<HomeScreen> {
               PopupMenuButton<String>(
                 tooltip: '更多',
                 onSelected: (value) {
-                  if (value == 'sources') {
+                  if (value == 'recommendations') {
+                    _pauseCatalog();
+                    Navigator.push<void>(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => RecommendationsScreen(
+                          repository: widget.repository,
+                          store: widget.store,
+                        ),
+                      ),
+                    );
+                  } else if (value == 'sources') {
                     _manageSources();
                   } else if (value == 'settings') {
                     Navigator.push(
@@ -486,6 +585,11 @@ class _HomeScreenState extends State<HomeScreen> {
                   }
                 },
                 itemBuilder: (_) => [
+                  if (widget.store.allowsSource('hongguo'))
+                    const PopupMenuItem(
+                      value: 'recommendations',
+                      child: Text('红果推荐'),
+                    ),
                   if (widget.repository.supportsSourceManagement)
                     const PopupMenuItem(value: 'sources', child: Text('站源管理')),
                   const PopupMenuItem(value: 'users', child: Text('用户管理')),
@@ -651,19 +755,52 @@ class _HomeScreenState extends State<HomeScreen> {
               key: ValueKey('search-${_group.id}'),
               controller: _search,
               autofocus: true,
-              hint: _source.onlineSearch ? '搜索红果短剧' : '筛选本机已更新剧库',
-              suggestions: _source.onlineSearch
-                  ? widget.repository.suggestions
-                  : null,
+              hint: _group.id == 'all'
+                  ? '搜索红果及其他站源已加载内容'
+                  : _onlineSearch
+                  ? '搜索红果短剧'
+                  : '筛选本机已更新剧库',
+              suggestions: _onlineSearch ? widget.repository.suggestions : null,
               onChanged: _searchChanged,
-              onSearch: (_) {
-                _debounce?.cancel();
-                if (_source.onlineSearch) {
-                  _load();
-                } else {
-                  setState(() {});
-                }
-              },
+              onCancel: () => unawaited(widget.repository.cancelSuggestions()),
+              onSearch: _submitSearch,
+            ),
+          ),
+        if (_searchVisible &&
+            _search.text.trim().isEmpty &&
+            widget.store.recentSearches.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        for (final query in widget.store.recentSearches)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: ActionChip(
+                              avatar: const Icon(
+                                Icons.history_rounded,
+                                size: 16,
+                              ),
+                              label: Text(query),
+                              onPressed: () => _submitSearch(query),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: '清空最近搜索',
+                  onPressed: () =>
+                      saveUserChange(context, widget.store.clearRecentSearches),
+                  icon: const Icon(Icons.delete_outline_rounded, size: 20),
+                ),
+              ],
             ),
           ),
         CatalogFilters(
@@ -673,27 +810,35 @@ class _HomeScreenState extends State<HomeScreen> {
           error: _categoriesError,
           onCategory: _changeCategory,
           onRetry: () => _loadCategories(force: true),
-          trailing: _supportsVipFilter
-              ? IconButton(
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_supportsVipFilter)
+                IconButton(
                   tooltip: widget.store.hideVip ? 'VIP：隐藏' : 'VIP：显示',
-                  onPressed: () =>
-                      widget.store.setHideVip(!widget.store.hideVip),
+                  onPressed: () => saveUserChange(
+                    context,
+                    () => widget.store.setHideVip(!widget.store.hideVip),
+                  ),
                   icon: Icon(
                     widget.store.hideVip
                         ? Icons.visibility_off_outlined
                         : Icons.visibility_outlined,
                     size: 20,
                   ),
-                )
-              : _category.startsWith('local:')
-              ? const Tooltip(
-                  message: '筛选本机已更新剧库；更新站源可获取更多分类和剧集',
-                  child: Padding(
-                    padding: EdgeInsets.only(right: 12),
-                    child: Icon(Icons.info_outline, size: 18),
-                  ),
-                )
-              : null,
+                ),
+              IconButton(
+                tooltip: '排序与筛选 · ${widget.store.catalogView.sort.label}',
+                onPressed: _chooseCatalogView,
+                color:
+                    widget.store.catalogView.sort != CatalogSort.source ||
+                        widget.store.catalogView.release.isNotEmpty
+                    ? Theme.of(context).colorScheme.primary
+                    : null,
+                icon: const Icon(Icons.sort_rounded, size: 22),
+              ),
+            ],
+          ),
         ),
         if (_loading && _items.isNotEmpty)
           const LinearProgressIndicator(minHeight: 2),
@@ -771,7 +916,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     onRetry:
                         _hasMore &&
                             !_loadingMore &&
-                            (!_source.onlineSearch || _search.text.isEmpty)
+                            (!_onlineSearch || _search.text.isEmpty)
                         ? () => _load(more: true)
                         : null,
                     action: '加载更多',
@@ -921,8 +1066,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         ],
                       ),
                     );
-                    if (accepted == true) {
-                      await widget.store.clearHistory();
+                    if (accepted == true && context.mounted) {
+                      await saveUserChange(context, widget.store.clearHistory);
                     }
                   },
                 ),

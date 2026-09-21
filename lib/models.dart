@@ -78,8 +78,13 @@ class Drama {
     this.cover = '',
     this.episodes = 0,
     this.category = '',
-    this.vip = false,
-  });
+    bool? vip,
+    this.heat = '',
+    this.views = '',
+    this.onlineDate = '',
+    this.tags = const [],
+    this.releaseStatus = '',
+  }) : vipStatus = vip;
   final String id;
   final String source;
   final String sourceId;
@@ -88,7 +93,18 @@ class Drama {
   final String cover;
   final int episodes;
   final String category;
-  final bool vip;
+  final bool? vipStatus;
+  bool get vip => vipStatus == true;
+  final String heat;
+  final String views;
+  final String onlineDate;
+  final List<String> tags;
+  final String releaseStatus;
+  String get releaseLabel => switch (releaseStatus) {
+    'finished' || 'completed' => '已完结',
+    'ongoing' => '连载中',
+    _ => '状态未知',
+  };
 
   factory Drama.fromJson(Map<String, dynamic> json) => Drama(
     id: json['id'] as String? ?? '',
@@ -99,9 +115,21 @@ class Drama {
     cover: json['cover'] as String? ?? '',
     episodes: intValue(json['episodes']),
     category: json['category'] as String? ?? '',
-    vip: json['vip'] == true,
+    vip: json['vip'] == true
+        ? true
+        : json['vip'] == false &&
+              (json['source'] != 'huangdou' ||
+                  intValue(json['metadataSchema']) >= 1)
+        ? false
+        : null,
+    heat: json['heat']?.toString() ?? '',
+    views: json['views']?.toString() ?? '',
+    onlineDate: json['onlineDate'] as String? ?? '',
+    tags: (json['tags'] as List? ?? const []).whereType<String>().toList(),
+    releaseStatus: json['releaseStatus'] as String? ?? '',
   );
   Map<String, dynamic> toJson() => {
+    'metadataSchema': 1,
     'id': id,
     'source': source,
     'sourceId': sourceId,
@@ -110,8 +138,53 @@ class Drama {
     'cover': cover,
     'episodes': episodes,
     'category': category,
-    'vip': vip,
+    'vip': vipStatus,
+    'heat': heat,
+    'views': views,
+    'onlineDate': onlineDate,
+    'tags': tags,
+    'releaseStatus': releaseStatus,
   };
+
+  Drama merge(Drama fresh) {
+    if (id != fresh.id) return fresh;
+    const genericCategories = {
+      '短剧',
+      '真人剧',
+      '漫剧',
+      'AI剧',
+      'AI 剧',
+      'AI短剧',
+      'AI 短剧',
+      'AI漫剧',
+      'AI 漫剧',
+    };
+    return Drama(
+      id: id,
+      source: fresh.source.isEmpty ? source : fresh.source,
+      sourceId: fresh.sourceId.isEmpty ? sourceId : fresh.sourceId,
+      title: fresh.title.isEmpty || fresh.title == '短剧' ? title : fresh.title,
+      description: fresh.description.isEmpty ? description : fresh.description,
+      cover: fresh.cover.isEmpty ? cover : fresh.cover,
+      episodes: fresh.episodes > 0 ? fresh.episodes : episodes,
+      category:
+          fresh.category.isEmpty ||
+              genericCategories.contains(fresh.category) &&
+                  category.isNotEmpty &&
+                  !genericCategories.contains(category)
+          ? category
+          : fresh.category,
+      vip: fresh.vipStatus ?? vipStatus,
+      heat: fresh.heat.isEmpty ? heat : fresh.heat,
+      views: fresh.views.isEmpty ? views : fresh.views,
+      onlineDate: fresh.onlineDate.isEmpty ? onlineDate : fresh.onlineDate,
+      tags: fresh.tags.isEmpty ? tags : fresh.tags,
+      releaseStatus:
+          fresh.releaseStatus.isEmpty || fresh.releaseStatus == 'unknown'
+          ? releaseStatus
+          : fresh.releaseStatus,
+    );
+  }
 }
 
 class Episode {
@@ -130,9 +203,10 @@ class Episode {
 }
 
 class DramaDetail {
-  DramaDetail(this.drama, this.episodes);
+  DramaDetail(this.drama, this.episodes, {this.warning = ''});
   final Drama drama;
   final List<Episode> episodes;
+  final String warning;
   factory DramaDetail.fromJson(Map<String, dynamic> json) {
     final rows = json['chapters'] as List? ?? const [];
     return DramaDetail(
@@ -141,6 +215,7 @@ class DramaDetail {
         for (var i = 0; i < rows.length; i++)
           Episode(Map<String, dynamic>.from(rows[i] as Map), i + 1),
       ],
+      warning: json['warning'] as String? ?? '',
     );
   }
 }

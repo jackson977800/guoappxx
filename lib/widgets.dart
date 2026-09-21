@@ -7,6 +7,21 @@ import 'app_layout.dart';
 import 'models.dart';
 import 'remote_widgets.dart';
 
+Future<void> saveUserChange(
+  BuildContext context,
+  Future<void> Function() action,
+) async {
+  try {
+    await action();
+  } catch (_) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('未能保存，请检查存储空间和权限后重试。')));
+    }
+  }
+}
+
 class RefreshAction extends StatefulWidget {
   const RefreshAction({
     super.key,
@@ -182,22 +197,68 @@ class CachedCoverImage extends StatefulWidget {
 
 class _CachedCoverImageState extends State<CachedCoverImage> {
   late Future<String> _file;
+  int _coverRevision = 0;
+  bool _coverFailed = false;
+  bool _retryOnFailure = false;
+  bool _retryQueued = false;
+  String? _failedPath;
 
   @override
   void initState() {
     super.initState();
+    _coverRevision = widget.repository.catalogUpdates.coverRevision(
+      widget.drama.id,
+    );
+    widget.repository.catalogUpdates.addListener(_metadataChanged);
     _file = widget.repository.cover(widget.drama);
   }
 
   @override
   void didUpdateWidget(covariant CachedCoverImage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.repository != widget.repository) {
+      oldWidget.repository.catalogUpdates.removeListener(_metadataChanged);
+      widget.repository.catalogUpdates.addListener(_metadataChanged);
+    }
     if (oldWidget.repository != widget.repository ||
         oldWidget.drama.id != widget.drama.id ||
         oldWidget.drama.cover != widget.drama.cover ||
         oldWidget.drama.source != widget.drama.source) {
+      _coverFailed = _retryOnFailure = false;
+      _failedPath = null;
+      _coverRevision = widget.repository.catalogUpdates.coverRevision(
+        widget.drama.id,
+      );
       _file = widget.repository.cover(widget.drama);
     }
+  }
+
+  void _metadataChanged() {
+    final revision = widget.repository.catalogUpdates.coverRevision(
+      widget.drama.id,
+    );
+    if (revision == _coverRevision) return;
+    _coverRevision = revision;
+    _retryOnFailure = true;
+    if (_coverFailed) _queueRetry();
+  }
+
+  void _queueRetry() {
+    if (_retryQueued || !_retryOnFailure) return;
+    _retryQueued = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _retryQueued = false;
+      if (!mounted || !_retryOnFailure) return;
+      _retryOnFailure = false;
+      _retry(_failedPath);
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
+  @override
+  void dispose() {
+    widget.repository.catalogUpdates.removeListener(_metadataChanged);
+    super.dispose();
   }
 
   Future<void> _retry(String? path) async {
@@ -210,21 +271,31 @@ class _CachedCoverImageState extends State<CachedCoverImage> {
     }
     if (mounted) {
       setState(() {
-        _file = widget.repository.cover(widget.drama, force: true);
+        _coverFailed = _retryOnFailure = false;
+        _failedPath = null;
+        _file = widget.repository.cover(
+          widget.repository.catalogUpdates.current(widget.drama),
+          force: true,
+        );
       });
     }
   }
 
-  Widget _failed(String? path) => Center(
-    child: IconButton(
-      tooltip: '重试海报',
-      onPressed: () => _retry(path),
-      icon: Icon(
-        Icons.refresh_rounded,
-        color: Theme.of(context).colorScheme.onSurfaceVariant,
+  Widget _failed(String? path) {
+    _coverFailed = true;
+    _failedPath = path;
+    if (_retryOnFailure) _queueRetry();
+    return Center(
+      child: IconButton(
+        tooltip: '重试海报',
+        onPressed: () => _retry(path),
+        icon: Icon(
+          Icons.refresh_rounded,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
       ),
-    ),
-  );
+    );
+  }
 
   @override
   Widget build(BuildContext context) => FutureBuilder<String>(

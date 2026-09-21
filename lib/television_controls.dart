@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 
 import 'models.dart';
+import 'playback_preferences.dart';
 import 'remote_widgets.dart';
 import 'widgets.dart';
 
@@ -444,9 +445,10 @@ class TelevisionEpisodeDialog extends StatelessWidget {
 }
 
 class TelevisionPlaybackSetting {
-  const TelevisionPlaybackSetting({this.speed, this.quality});
+  const TelevisionPlaybackSetting({this.speed, this.quality, this.autoAdvance});
   final double? speed;
   final int? quality;
+  final bool? autoAdvance;
 }
 
 class TelevisionSettingsDialog extends StatelessWidget {
@@ -457,12 +459,14 @@ class TelevisionSettingsDialog extends StatelessWidget {
     required this.qualities,
     required this.favorite,
     required this.onFavorite,
+    this.autoAdvance = true,
   });
   final double speed;
   final int quality;
   final List<int> qualities;
   final bool favorite;
   final VoidCallback onFavorite;
+  final bool autoAdvance;
 
   @override
   Widget build(BuildContext context) => AlertDialog(
@@ -480,7 +484,7 @@ class TelevisionSettingsDialog extends StatelessWidget {
               spacing: 8,
               runSpacing: 8,
               children: [
-                for (final value in const [.75, 1.0, 1.25, 1.5, 2.0])
+                for (final value in playbackSpeeds)
                   RemoteButton(
                     key: ValueKey('tv-speed-$value'),
                     label: '${value}x',
@@ -514,6 +518,15 @@ class TelevisionSettingsDialog extends StatelessWidget {
                     ),
                   ),
               ],
+            ),
+            const SizedBox(height: 20),
+            RemoteButton(
+              key: const ValueKey('tv-auto-advance'),
+              label: autoAdvance ? '自动连播：开' : '自动连播：关',
+              onPressed: () => Navigator.pop(
+                context,
+                TelevisionPlaybackSetting(autoAdvance: !autoAdvance),
+              ),
             ),
             const SizedBox(height: 20),
             RemoteButton(

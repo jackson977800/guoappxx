@@ -89,21 +89,31 @@ func (manager *nativeDownloads) load() error {
 	if os.IsNotExist(err) {
 		return nil
 	}
-	if err != nil || info.Size() > 32<<20 {
+	if err != nil || !info.Mode().IsRegular() || info.Size() > 32<<20 {
 		return errors.New("无法读取下载记录，原文件已保留")
 	}
 	data, err := os.ReadFile(path)
 	var records []*nativeDownloadRecord
-	if err != nil || json.Unmarshal(data, &records) != nil {
+	if err != nil || json.Unmarshal(data, &records) != nil || records == nil {
 		return errors.New("下载记录无法解析，原文件已保留")
 	}
+	seen := map[string]bool{}
 	for _, record := range records {
-		if record == nil || record.Index < 1 || record.ID != nativeDownloadID(record.Drama.ID, record.Index) {
-			continue
+		if record == nil || record.Index < 1 || record.ID != nativeDownloadID(record.Drama.ID, record.Index) || seen[record.ID] {
+			return errors.New("下载记录条目无效，原索引和文件已保留")
 		}
+		seen[record.ID] = true
 		if record.File != "" && record.File != "media.mp4" && record.File != "index.m3u8" {
-			continue
+			return errors.New("下载记录文件信息无效，原索引和文件已保留")
 		}
+		switch record.State {
+		case "removing", "downloading", "queued", "paused", "failed", "completed":
+		default:
+			return errors.New("下载记录状态无效，原索引和文件已保留")
+		}
+	}
+	for _, record := range records {
+		record.Drama = migrateNativeDrama(record.Drama)
 		if !nativeDownloadAvailable(record.nativeDownloadJob) {
 			manager.jobs[record.ID] = record
 			continue
@@ -150,6 +160,9 @@ func nativeDownloadWrite(path string, data []byte) error {
 }
 
 func (manager *nativeDownloads) saveLocked() error {
+	if manager.loadErr != nil {
+		return manager.loadErr
+	}
 	records := make([]nativeDownloadRecord, 0, len(manager.jobs))
 	for _, job := range manager.jobs {
 		records = append(records, *job)
@@ -158,6 +171,9 @@ func (manager *nativeDownloads) saveLocked() error {
 	data, err := json.Marshal(records)
 	if err != nil {
 		return err
+	}
+	if len(data) > 32<<20 {
+		return errors.New("下载记录超过保存上限，原索引已保留")
 	}
 	if err = nativeDownloadWrite(filepath.Join(manager.root, "index.json"), data); err != nil {
 		return errors.New("保存下载记录失败，请检查剩余存储空间")

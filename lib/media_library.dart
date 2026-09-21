@@ -560,7 +560,7 @@ class MediaLibrary extends ChangeNotifier {
     }
     _checking = true;
     try {
-      if (automaticWorker) await store.preferences.reload();
+      if (automaticWorker) await store.reload();
       if (!store.autoExport) return;
       final jobs = await repository.downloads();
       if (!jobs.any((job) => job.completed)) return;

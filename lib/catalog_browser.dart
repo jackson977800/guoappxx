@@ -41,11 +41,36 @@ class CatalogBrowser {
   final _menus = <String, List<CatalogCategory>>{};
   final _library = <String, Map<String, Drama>>{};
   final _sessions = <String, _CatalogSession>{};
+  int _generation = 0;
+
+  Future<void> cancel() {
+    _generation++;
+    for (final session in _sessions.values) {
+      session.generation++;
+    }
+    return repository.cancelCatalog();
+  }
 
   void _remember(String source, Iterable<Drama> items) {
     final library = _library.putIfAbsent(source, () => {});
     for (final drama in items) {
-      if (drama.source == source) library[drama.id] = drama;
+      if (drama.source == source)
+        library[drama.id] = library[drama.id]?.merge(drama) ?? drama;
+    }
+  }
+
+  void updateDrama(Drama drama) {
+    final library = _library[drama.source];
+    if (library?.containsKey(drama.id) == true) {
+      library![drama.id] = library[drama.id]!.merge(drama);
+    }
+    for (final session in _sessions.values) {
+      final entry = session.entries[drama.source];
+      if (entry == null) continue;
+      entry.items = [
+        for (final item in entry.items)
+          item.id == drama.id ? item.merge(drama) : item,
+      ];
     }
   }
 
@@ -128,6 +153,12 @@ class CatalogBrowser {
     bool useCache = false,
     void Function(CatalogPage)? onCached,
   }) async {
+    final request = ++_generation;
+    for (final session in _sessions.values) {
+      session.generation++;
+    }
+    await repository.cancelCatalog();
+    if (request != _generation) throw AppFailure('已取消加载');
     final choice = query.isEmpty ? _choice(group, category) : null;
     final requests = choice != null && !choice.category.local
         ? choice.requests
@@ -188,8 +219,9 @@ class CatalogBrowser {
           entry.items = cached.items;
           entry.page = cached.page;
           entry.nextPage = cached.page + 1;
-          entry.hasMore = cached.hasMore;
-          entry.fresh = cached.fresh;
+          entry.hasMore = cached.hasMore || cached.warning.isNotEmpty;
+          entry.fresh = cached.fresh && cached.warning.isEmpty;
+          if (cached.warning.isNotEmpty) failures[source] = cached.warning;
           _remember(source, cached.items);
         } catch (_) {}
       });
@@ -222,14 +254,19 @@ class CatalogBrowser {
         entry.items = items.values.toList();
         entry.page = result.page;
         entry.nextPage = result.warning.isEmpty ? result.page + 1 : page;
-        entry.hasMore = result.hasMore || result.warning.isNotEmpty;
+        entry.hasMore =
+            query.isEmpty && (result.hasMore || result.warning.isNotEmpty);
         entry.fresh = result.fresh && result.warning.isEmpty;
         if (query.isEmpty) _remember(source, result.items);
-        if (result.warning.isNotEmpty) failures[source] = result.warning;
+        if (result.warning.isNotEmpty) {
+          failures[source] = result.warning;
+        } else {
+          failures.remove(source);
+        }
       } catch (error) {
         if (generation != session.generation) return;
         entry.nextPage = page;
-        entry.hasMore = true;
+        entry.hasMore = query.isEmpty;
         entry.fresh = false;
         failures[source] = error.toString();
       }

@@ -40,14 +40,20 @@ class _RankingsScreenState extends State<RankingsScreen> {
   @override
   void initState() {
     super.initState();
+    widget.repository.catalogUpdates.addListener(_metadataChanged);
     _initialize();
   }
 
   @override
   void dispose() {
+    widget.repository.catalogUpdates.removeListener(_metadataChanged);
     _generation++;
     _scroll.dispose();
     super.dispose();
+  }
+
+  void _metadataChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _initialize() async {
@@ -146,6 +152,13 @@ class _RankingsScreenState extends State<RankingsScreen> {
         .where((board) => board.groupId == _board?.groupId)
         .toList();
     final items = _items
+        .map(
+          (item) => RankingItem(
+            item.rank,
+            widget.repository.catalogUpdates.current(item.drama),
+            metric: item.metric,
+          ),
+        )
         .where(
           (item) =>
               widget.store.allowsSource(item.drama.source) &&
