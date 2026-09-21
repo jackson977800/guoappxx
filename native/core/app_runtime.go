@@ -57,12 +57,6 @@ type Downloader struct {
 	previewSessions       map[string]*huangguoPreviewSession
 }
 
-type proxyRouter struct{}
-
-func (router *proxyRouter) proxy(request *http.Request) (*url.URL, error) {
-	return http.ProxyFromEnvironment(request)
-}
-
 func defaultConfig() Config { return Config{MaxPagesPerSort: 1, PageSize: 30, Retries: 2} }
 
 type nativeDrama struct {
@@ -84,26 +78,30 @@ type nativeDrama struct {
 }
 
 type nativeInput struct {
-	PlaybackSession string                  `json:"playbackSession"`
-	StartMS         int64                   `json:"startMs"`
-	DurationMS      int64                   `json:"durationMs"`
-	Board           string                  `json:"board"`
-	Entries         []nativeDownloadEpisode `json:"entries"`
-	JobID           string                  `json:"jobId"`
-	Command         string                  `json:"command"`
-	Action          string                  `json:"action"`
-	Directory       string                  `json:"directory"`
-	Source          string                  `json:"source"`
-	Page            int                     `json:"page"`
-	Query           string                  `json:"query"`
-	Category        string                  `json:"category"`
-	Drama           nativeDrama             `json:"drama"`
-	Chapter         Chapter                 `json:"chapter"`
-	Index           int                     `json:"index"`
-	Quality         int                     `json:"quality"`
-	Session         string                  `json:"session"`
-	Sequence        int64                   `json:"sequence"`
-	Force           bool                    `json:"force"`
+	ExpectedVersions map[string]string       `json:"expectedVersions"`
+	SystemProxy      nativeSystemProxy       `json:"systemProxy"`
+	Settings         nativeResourceSettings  `json:"settings"`
+	JobIDs           []string                `json:"jobIds"`
+	PlaybackSession  string                  `json:"playbackSession"`
+	StartMS          int64                   `json:"startMs"`
+	DurationMS       int64                   `json:"durationMs"`
+	Board            string                  `json:"board"`
+	Entries          []nativeDownloadEpisode `json:"entries"`
+	JobID            string                  `json:"jobId"`
+	Command          string                  `json:"command"`
+	Action           string                  `json:"action"`
+	Directory        string                  `json:"directory"`
+	Source           string                  `json:"source"`
+	Page             int                     `json:"page"`
+	Query            string                  `json:"query"`
+	Category         string                  `json:"category"`
+	Drama            nativeDrama             `json:"drama"`
+	Chapter          Chapter                 `json:"chapter"`
+	Index            int                     `json:"index"`
+	Quality          int                     `json:"quality"`
+	Session          string                  `json:"session"`
+	Sequence         int64                   `json:"sequence"`
+	Force            bool                    `json:"force"`
 }
 
 type nativeCatalogResult struct {
@@ -118,19 +116,22 @@ type nativeCatalogResult struct {
 }
 
 type nativePlan struct {
-	DanmakuID  string            `json:"danmakuId,omitempty"`
-	Local      bool              `json:"local"`
-	URL        string            `json:"url"`
-	Headers    map[string]string `json:"headers"`
-	Key        string            `json:"decryptionKey,omitempty"`
-	Quality    int               `json:"quality"`
-	Qualities  []int             `json:"qualities"`
-	Session    string            `json:"session,omitempty"`
-	RouteIndex int               `json:"routeIndex"`
-	RouteCount int               `json:"routeCount"`
+	PrefetchedBytes int64             `json:"prefetchedBytes,omitempty"`
+	DanmakuID       string            `json:"danmakuId,omitempty"`
+	Local           bool              `json:"local"`
+	URL             string            `json:"url"`
+	Headers         map[string]string `json:"headers"`
+	Key             string            `json:"decryptionKey,omitempty"`
+	Quality         int               `json:"quality"`
+	Qualities       []int             `json:"qualities"`
+	Session         string            `json:"session,omitempty"`
+	RouteIndex      int               `json:"routeIndex"`
+	RouteCount      int               `json:"routeCount"`
 }
 
 type nativeEngine struct {
+	settingsMu       sync.Mutex
+	settings         nativeResourceSettings
 	readMu           sync.Mutex
 	reads            map[string]nativeReadRequest
 	readCount        int
@@ -256,6 +257,7 @@ func newNativeEngine(directory string) (*nativeEngine, error) {
 			return nil
 		}}
 	engine := &nativeEngine{downloader: d, directory: directory, catalogs: map[string][]nativeDrama{}, catalogStates: map[string]nativeCatalogState{}}
+	engine.loadResourceSettings()
 	d.loadRankingCache()
 	engine.loadCatalogCache()
 	engine.loadSourceRecords()
@@ -331,7 +333,7 @@ func nativeDispatch(input nativeInput) (any, error) {
 			nativeState.engine = engine
 		}
 		nativeState.Unlock()
-		return map[string]any{"version": "0.2.11", "standalone": true, "allSources": buildAllSources == "true"}, nil
+		return map[string]any{"version": "0.2.12", "standalone": true, "allSources": buildAllSources == "true"}, nil
 	}
 	engine := nativeState.engine
 	nativeState.Unlock()
@@ -343,10 +345,12 @@ func nativeDispatch(input nativeInput) (any, error) {
 		duration = 10 * time.Minute
 	} else if input.Action == "danmaku" {
 		duration = 10 * time.Second
+	} else if input.Action == "preload" {
+		duration = 15 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), duration)
 	defer cancel()
-	if input.Action == "danmaku" || input.Session != "" && (input.Action == "catalog" || input.Action == "categories" || input.Action == "suggestions" || input.Action == "recommendations" || input.Action == "metadata") {
+	if input.Action == "danmaku" || input.Action == "preload" || input.Session != "" && (input.Action == "catalog" || input.Action == "categories" || input.Action == "suggestions" || input.Action == "recommendations" || input.Action == "metadata") {
 		work, finish, err := engine.beginRead(ctx, input)
 		if err != nil {
 			return nil, err
@@ -355,6 +359,16 @@ func nativeDispatch(input nativeInput) (any, error) {
 		ctx = work
 	}
 	switch input.Action {
+	case "updateSystemProxy":
+		return true, engine.updateSystemProxy(input.SystemProxy)
+	case "resourceSettings":
+		return engine.resourceSettings(), nil
+	case "saveResourceSettings":
+		return engine.saveResourceSettings(input.Settings)
+	case "controlDownloadBatch":
+		return engine.downloads.controlBatchExpected(ctx, input.JobIDs, input.Command, input.ExpectedVersions)
+	case "preload":
+		return engine.nativePreload(ctx, input)
 	case "danmaku":
 		return engine.nativeDanmaku(ctx, input)
 	case "cancelRead":
@@ -393,7 +407,7 @@ func nativeDispatch(input nativeInput) (any, error) {
 		jobs, err := engine.downloads.snapshot()
 		return map[string]any{"jobs": jobs}, err
 	case "enqueueDownloads":
-		added, err := engine.downloads.enqueue(input)
+		added, err := engine.downloads.enqueueContext(ctx, input)
 		return map[string]int{"added": added}, err
 	case "controlDownloads":
 		return true, engine.downloads.control(input.JobID, input.Command)

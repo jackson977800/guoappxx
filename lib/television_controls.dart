@@ -6,6 +6,7 @@ import 'package:media_kit/media_kit.dart';
 
 import 'models.dart';
 import 'playback_preferences.dart';
+import 'playback_buffer.dart';
 import 'remote_widgets.dart';
 import 'widgets.dart';
 
@@ -57,6 +58,7 @@ class _TelevisionControlsState extends State<TelevisionControls> {
     for (final stream in [
       widget.player.stream.position,
       widget.player.stream.duration,
+      widget.player.stream.buffer,
       widget.player.stream.playing,
       widget.player.stream.buffering,
     ]) {
@@ -308,12 +310,31 @@ class _TelevisionControlsState extends State<TelevisionControls> {
                         onPressed: widget.onTogglePlayback,
                         child: Column(
                           children: [
-                            LinearProgressIndicator(
-                              value: duration > 0
-                                  ? (position / duration).clamp(0, 1)
-                                  : 0,
-                              minHeight: 5,
-                              backgroundColor: Colors.white24,
+                            Stack(
+                              children: [
+                                LinearProgressIndicator(
+                                  value: duration > 0
+                                      ? (state.buffer.inMilliseconds /
+                                                1000 /
+                                                duration)
+                                            .clamp(0, 1)
+                                      : 0,
+                                  minHeight: 5,
+                                  color: Colors.white38,
+                                  backgroundColor: Colors.white24,
+                                ),
+                                LinearProgressIndicator(
+                                  value: duration > 0
+                                      ? (position / duration).clamp(0, 1)
+                                      : 0,
+                                  minHeight: 5,
+                                  backgroundColor: Colors.transparent,
+                                ),
+                              ],
+                            ),
+                            PlaybackBufferStatus(
+                              player: widget.player,
+                              enabled: widget.enabled,
                             ),
                             const SizedBox(height: 10),
                             Row(
@@ -450,11 +471,13 @@ class TelevisionPlaybackSetting {
     this.quality,
     this.autoAdvance,
     this.danmaku,
+    this.preload,
   });
   final double? speed;
   final int? quality;
   final bool? autoAdvance;
   final bool? danmaku;
+  final bool? preload;
 }
 
 class TelevisionSettingsDialog extends StatelessWidget {
@@ -470,6 +493,8 @@ class TelevisionSettingsDialog extends StatelessWidget {
     this.showDanmaku = false,
     this.danmakuStatus = '',
     this.onRetryDanmaku,
+    this.preload = true,
+    this.preloadStatus = '',
   });
   final double speed;
   final int quality;
@@ -481,6 +506,8 @@ class TelevisionSettingsDialog extends StatelessWidget {
   final bool showDanmaku;
   final String danmakuStatus;
   final VoidCallback? onRetryDanmaku;
+  final bool preload;
+  final String preloadStatus;
 
   @override
   Widget build(BuildContext context) => AlertDialog(
@@ -561,6 +588,17 @@ class TelevisionSettingsDialog extends StatelessWidget {
                 TelevisionPlaybackSetting(autoAdvance: !autoAdvance),
               ),
             ),
+            const SizedBox(height: 16),
+            RemoteButton(
+              key: const ValueKey('tv-preload-enabled'),
+              label: preload ? '下一集预加载：开' : '下一集预加载：关',
+              onPressed: () => Navigator.pop(
+                context,
+                TelevisionPlaybackSetting(preload: !preload),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(preloadStatus, style: const TextStyle(fontSize: 14)),
             const SizedBox(height: 20),
             RemoteButton(
               label: favorite ? '取消追剧' : '加入追剧',

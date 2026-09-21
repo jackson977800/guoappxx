@@ -17,6 +17,7 @@ class LocalSnapshot {
     'source',
     'hideVip',
     'playback',
+    'downloadPreferences',
     'catalogView',
     'recentSearches',
   };
@@ -35,7 +36,7 @@ class LocalSnapshot {
       globalKeys.contains(key) ||
       libraryKeys.contains(key) ||
       RegExp(
-        r'^profile\.[a-zA-Z0-9_-]{1,64}\.(history|favorites|followStates|mediaHistory|source|hideVip|playback|catalogView|recentSearches)$',
+        r'^profile\.[a-zA-Z0-9_-]{1,64}\.(history|favorites|followStates|mediaHistory|source|hideVip|playback|downloadPreferences|catalogView|recentSearches)$',
       ).hasMatch(key);
 
   Map<String, Object> get values => Map.of(_values);

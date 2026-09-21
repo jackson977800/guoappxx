@@ -54,7 +54,7 @@ func (manager *nativeDownloads) transferMedia(ctx context.Context, job nativeDow
 	} else {
 		bundle.assets = []nativeDownloadAsset{{address: media.URL, name: entry}}
 	}
-	directory := filepath.Join(manager.root, job.ID)
+	directory := manager.jobDirectory(job)
 	identity := entry + "\x00" + media.URL + "\x00" + hex.EncodeToString(media.CENCKey) + "\x00" + strconv.Itoa(bundle.quality)
 	if hls {
 		for _, asset := range bundle.assets {

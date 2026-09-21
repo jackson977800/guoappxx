@@ -17,6 +17,8 @@ import 'source_status.dart';
 import 'ranking_models.dart';
 import 'cover_decoder.dart';
 import 'catalog_updates.dart';
+import 'download_collections.dart';
+import 'resource_settings.dart';
 
 typedef _NativeRequest = Pointer<Utf8> Function(Pointer<Utf8>);
 typedef _DartRequest = Pointer<Utf8> Function(Pointer<Utf8>);
@@ -65,7 +67,18 @@ class AppFailure implements Exception {
 }
 
 abstract class AppRepository {
+  Future<ResourceSettings> resourceSettings() async => const ResourceSettings();
+  Future<ResourceSettings> saveResourceSettings(
+    ResourceSettings settings,
+  ) async => throw AppFailure('当前环境不支持资源设置');
   final catalogUpdates = CatalogUpdates();
+  Future<void> cancelPreload() async {}
+  Future<PlaybackPlan?> preload(
+    Drama drama,
+    Episode episode, {
+    int quality = 0,
+    bool online = false,
+  }) async => null;
   Future<void> cancelDanmaku() async {}
   Future<DanmakuPage> danmaku(
     PlaybackPlan plan, {
@@ -116,6 +129,29 @@ abstract class AppRepository {
     int quality = 0,
   }) async => throw AppFailure('当前环境不支持下载');
   Future<void> controlDownloads(String command, {String id = ''}) async {}
+  Future<DownloadBatchResult> controlDownloadBatch(
+    String command,
+    List<String> ids, {
+    Map<String, String> expectedVersions = const {},
+  }) async {
+    if (expectedVersions.isNotEmpty) throw AppFailure('当前环境不支持校验后清理原分集');
+    final completed = <String>[], failures = <String, String>{};
+    for (final id in ids.toSet()) {
+      try {
+        await controlDownloads(command, id: id);
+        completed.add(id);
+      } catch (error) {
+        failures[id] = error.toString();
+      }
+    }
+    return DownloadBatchResult(completed: completed, failures: failures);
+  }
+
+  Future<int> updateDownloadCollection(
+    DramaDetail detail,
+    List<Episode> episodes, {
+    int quality = 0,
+  }) => enqueueDownloads(detail, episodes, quality: quality);
   Future<PlaybackPlan?> localPlayback(Drama drama, Episode episode) async =>
       null;
   Future<PlaybackPlan> resolveOnline(
@@ -148,6 +184,33 @@ class NativeRepository extends AppRepository {
   final _readOwner = DateTime.now().microsecondsSinceEpoch.toString();
   int _readSequence = 0;
   final _activeReads = <String, int>{};
+
+  void _adminPermission() {
+    if (access != null && (access!.locked || !access!.profile.admin)) {
+      throw AppFailure('仅管理员可修改本机资源设置');
+    }
+  }
+
+  @override
+  Future<ResourceSettings> resourceSettings() async {
+    _adminPermission();
+    return ResourceSettings.fromJson(
+      await _call({'action': 'resourceSettings'}),
+    );
+  }
+
+  @override
+  Future<ResourceSettings> saveResourceSettings(
+    ResourceSettings settings,
+  ) async {
+    _adminPermission();
+    return ResourceSettings.fromJson(
+      await _call({
+        'action': 'saveResourceSettings',
+        'settings': settings.toJson(),
+      }),
+    );
+  }
 
   Future<Map<String, dynamic>> _read(
     String scope,
@@ -185,6 +248,26 @@ class NativeRepository extends AppRepository {
 
   @override
   Future<void> cancelDanmaku() => _cancelReads('danmaku');
+
+  @override
+  Future<void> cancelPreload() => _cancelReads('preload');
+
+  @override
+  Future<PlaybackPlan?> preload(
+    Drama drama,
+    Episode episode, {
+    int quality = 0,
+    bool online = false,
+  }) async => PlaybackPlan.fromJson(
+    await _read('preload', {
+      'action': 'preload',
+      'drama': drama.toJson(),
+      'chapter': episode.raw,
+      'index': episode.number,
+      'quality': quality,
+      'force': online || access?.canDownload == false,
+    }),
+  );
 
   @override
   Future<DanmakuPage> danmaku(
@@ -388,6 +471,7 @@ class NativeRepository extends AppRepository {
             'release',
             'cancelPlayback',
             'cancelRead',
+            'updateSystemProxy',
           }.contains(action) ||
           action == 'workLease' && input['command'] == 'end';
       final epoch = access?.profileEpoch;
@@ -417,6 +501,7 @@ class NativeRepository extends AppRepository {
         'detail',
         'metadata',
         'resolve',
+        'preload',
         'enqueueDownloads',
         'localPlayback',
       }.contains(action)) {
@@ -429,6 +514,7 @@ class NativeRepository extends AppRepository {
           {
             'downloads',
             'controlDownloads',
+            'controlDownloadBatch',
             'storage',
             'downloadDirectory',
             'moveDownloads',
@@ -446,6 +532,8 @@ class NativeRepository extends AppRepository {
               ? 620
               : action == 'danmaku'
               ? 15
+              : action == 'preload'
+              ? 20
               : 70,
         ),
       );
@@ -479,6 +567,7 @@ class NativeRepository extends AppRepository {
             'recommendations',
             'metadata',
             'danmaku',
+            'preload',
           }.contains(input['action'])) {
         unawaited(
           _call({
@@ -505,6 +594,11 @@ class NativeRepository extends AppRepository {
       throw AppFailure('应用与原生核心的站源版本不一致，请使用完整安装包重新安装');
     }
     if (!background) await BackgroundDownloads.prepare();
+    if (!background) {
+      SystemProxyMonitor.start((value) async {
+        await _call({'action': 'updateSystemProxy', 'systemProxy': value});
+      });
+    }
   }
 
   @override
@@ -627,7 +721,9 @@ class NativeRepository extends AppRepository {
     int quality = 0,
   }) async {
     _authorize(detail.drama.source, download: true);
+    final epoch = access?.profileEpoch;
     await BackgroundDownloads.ensureStarted();
+    if (epoch != access?.profileEpoch) throw AppFailure('用户已切换，请重新操作');
     final result = await _call({
       'action': 'enqueueDownloads',
       'drama': detail.drama.toJson(),
@@ -637,6 +733,53 @@ class NativeRepository extends AppRepository {
           .toList(),
     });
     return intValue(result['added']);
+  }
+
+  @override
+  Future<int> updateDownloadCollection(
+    DramaDetail detail,
+    List<Episode> episodes, {
+    int quality = 0,
+  }) async {
+    _authorize(detail.drama.source, download: true);
+    final epoch = access?.profileEpoch;
+    await BackgroundDownloads.ensureStarted();
+    if (epoch != access?.profileEpoch) throw AppFailure('用户已切换，请重新操作');
+    final result = await _call({
+      'action': 'enqueueDownloads',
+      'force': true,
+      'drama': detail.drama.toJson(),
+      'quality': quality,
+      'entries': episodes
+          .map((episode) => {'chapter': episode.raw, 'index': episode.number})
+          .toList(),
+    });
+    return intValue(result['added']);
+  }
+
+  @override
+  Future<DownloadBatchResult> controlDownloadBatch(
+    String command,
+    List<String> ids, {
+    Map<String, String> expectedVersions = const {},
+  }) async {
+    _downloadPermission();
+    final epoch = access?.profileEpoch;
+    if (ids.isEmpty || ids.length > 500) throw AppFailure('每批请选择 1 至 500 个任务');
+    final visible = (await downloads()).map((job) => job.id).toSet();
+    if (ids.any((id) => !visible.contains(id))) {
+      throw AppFailure('部分任务已删除或当前用户无权操作，请刷新');
+    }
+    if (command == 'resume') await BackgroundDownloads.ensureStarted();
+    if (epoch != access?.profileEpoch) throw AppFailure('用户已切换，请重新操作');
+    return DownloadBatchResult.fromJson(
+      await _call({
+        'action': 'controlDownloadBatch',
+        'command': command,
+        'jobIds': ids,
+        if (expectedVersions.isNotEmpty) 'expectedVersions': expectedVersions,
+      }),
+    );
   }
 
   @override

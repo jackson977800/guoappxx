@@ -5,9 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"net/url"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -65,8 +63,8 @@ func (engine *nativeEngine) nativeOpenPlayback(ctx context.Context, choice nativ
 		return nativePlan{}, errors.New("该集没有其他可用的播放线路")
 	}
 	media := choice.media[choice.index]
-	parsed, err := url.Parse(media.URL)
-	if err != nil || !isProviderHTTPMediaURL(media.URL) {
+	var err error
+	if !isProviderHTTPMediaURL(media.URL) {
 		return nativePlan{}, errors.New("站源未返回有效的播放地址")
 	}
 	tokenBytes := make([]byte, 24)
@@ -80,7 +78,7 @@ func (engine *nativeEngine) nativeOpenPlayback(ctx context.Context, choice nativ
 		RouteIndex: choice.index, RouteCount: len(choice.media), Session: hex.EncodeToString(tokenBytes),
 	}
 	choice.streamSession = ""
-	if media.Playlist != "" || strings.HasSuffix(strings.ToLower(parsed.Path), ".m3u8") {
+	{
 		engine.mu.Lock()
 		if engine.stream == nil {
 			engine.stream, err = newNativeStreamServer(engine.downloader)

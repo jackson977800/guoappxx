@@ -254,6 +254,7 @@ class PlaybackPlan {
     this.qualities = const [],
     this.session = '',
     this.danmakuId = '',
+    this.prefetchedBytes = 0,
     this.routeIndex = 0,
     this.routeCount = 1,
     this.local = false,
@@ -265,6 +266,7 @@ class PlaybackPlan {
   final List<int> qualities;
   final String session;
   final String danmakuId;
+  final int prefetchedBytes;
   final int routeIndex;
   final int routeCount;
   final bool local;
@@ -281,6 +283,7 @@ class PlaybackPlan {
       ..sort((a, b) => b.compareTo(a)),
     session: json['session'] as String? ?? '',
     danmakuId: json['danmakuId'] as String? ?? '',
+    prefetchedBytes: intValue(json['prefetchedBytes']),
     routeIndex: intValue(json['routeIndex']),
     routeCount: intValue(json['routeCount']) > 0
         ? intValue(json['routeCount'])
@@ -332,8 +335,12 @@ class DownloadJob {
     this.actualQuality = 0,
     this.error = '',
     this.created = 0,
+    this.revision = 0,
+    this.archived = false,
   });
   final int created;
+  final int revision;
+  final bool archived;
   final String id;
   final Drama drama;
   final Episode episode;
@@ -371,6 +378,8 @@ class DownloadJob {
     actualQuality: intValue(value['actualQuality']),
     error: value['error'] as String? ?? '',
     created: intValue(value['created']),
+    revision: intValue(value['revision']),
+    archived: value['archived'] == true,
   );
 }
 

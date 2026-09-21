@@ -158,7 +158,7 @@ class DramaCover extends StatelessWidget {
             ),
           if (drama.vip)
             Positioned(
-              right: 8,
+              left: 8,
               top: 8,
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),

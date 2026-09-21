@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'models.dart';
+import 'episode_browser.dart';
 import 'playback_preferences.dart';
 
 enum PlayerMenuSection { episodes, speed, quality, settings }
@@ -25,6 +26,7 @@ class PlayerMenu extends StatefulWidget {
     this.showDanmaku = false,
     this.danmakuStatus = '',
     this.onRetryDanmaku,
+    this.preloadStatus = '',
   });
 
   final PlayerMenuSection section;
@@ -39,6 +41,7 @@ class PlayerMenu extends StatefulWidget {
   final bool showDanmaku;
   final String danmakuStatus;
   final VoidCallback? onRetryDanmaku;
+  final String preloadStatus;
   final ValueChanged<int> onEpisode;
   final Future<void> Function(PlaybackPreferences) onPreferences;
   final Future<void> Function() onFavorite;
@@ -236,6 +239,21 @@ class _PlayerMenuState extends State<PlayerMenu> {
         ],
         if (all) ...[
           SwitchListTile.adaptive(
+            key: const ValueKey('player-preload-enabled'),
+            contentPadding: EdgeInsets.zero,
+            title: const Text('下一集预加载'),
+            subtitle: Text(widget.local ? '本地播放不预取网络视频' : widget.preloadStatus),
+            value: preferences.preload,
+            onChanged: _busy
+                ? null
+                : (value) => _run(
+                    () => widget.onPreferences(
+                      preferences.copyWith(preload: value),
+                    ),
+                  ),
+          ),
+          const SizedBox(height: 8),
+          SwitchListTile.adaptive(
             key: const ValueKey('player-auto-advance'),
             contentPadding: EdgeInsets.zero,
             title: const Text('自动连播'),
@@ -277,7 +295,7 @@ class _PlayerMenuState extends State<PlayerMenu> {
   }
 }
 
-class PlayerEpisodeGrid extends StatefulWidget {
+class PlayerEpisodeGrid extends StatelessWidget {
   const PlayerEpisodeGrid({
     super.key,
     required this.episodes,
@@ -289,93 +307,13 @@ class PlayerEpisodeGrid extends StatefulWidget {
   final int currentIndex;
   final ValueChanged<int> onSelected;
   final String keyPrefix;
-
   @override
-  State<PlayerEpisodeGrid> createState() => _PlayerEpisodeGridState();
-}
-
-class _PlayerEpisodeGridState extends State<PlayerEpisodeGrid> {
-  final _scroll = ScrollController();
-  String? _layout;
-
-  @override
-  void dispose() {
-    _scroll.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => LayoutBuilder(
-    builder: (context, constraints) {
-      final scale = MediaQuery.textScalerOf(context);
-      final columns =
-          ((constraints.maxWidth - 20) / math.max(76, scale.scale(42) + 24))
-              .floor()
-              .clamp(2, 12);
-      final extent = math.max(46.0, scale.scale(18) + 26);
-      final layout =
-          '$columns:$extent:${constraints.maxHeight}:${widget.currentIndex}';
-      if (_layout != layout) {
-        _layout = layout;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted || !_scroll.hasClients) return;
-          final offset =
-              (widget.currentIndex ~/ columns) * (extent + 8) -
-              constraints.maxHeight / 2 +
-              extent / 2;
-          _scroll.jumpTo(offset.clamp(0.0, _scroll.position.maxScrollExtent));
-        });
-      }
-      return GridView.builder(
-        controller: _scroll,
-        padding: const EdgeInsets.fromLTRB(14, 4, 14, 18),
-        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: columns,
-          mainAxisExtent: extent,
-          crossAxisSpacing: 8,
-          mainAxisSpacing: 8,
-        ),
-        itemCount: widget.episodes.length,
-        itemBuilder: (context, index) {
-          final episode = widget.episodes[index];
-          return Semantics(
-            selected: index == widget.currentIndex,
-            label: '第 ${episode.number} 集${episode.vip ? '，VIP' : ''}',
-            child: TextButton(
-              key: ValueKey('${widget.keyPrefix}-${episode.number}'),
-              onPressed: () => widget.onSelected(index),
-              style: TextButton.styleFrom(
-                padding: EdgeInsets.zero,
-                backgroundColor: index == widget.currentIndex
-                    ? const Color(0xFF763D32)
-                    : const Color(0xFF24252C),
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Flexible(
-                    child: Text(
-                      '${episode.number}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  if (episode.vip)
-                    const Icon(
-                      Icons.workspace_premium_rounded,
-                      color: Color(0xFFF6C86B),
-                      size: 13,
-                    ),
-                ],
-              ),
-            ),
-          );
-        },
-      );
-    },
+  Widget build(BuildContext context) => EpisodeBrowser(
+    episodes: episodes,
+    currentNumber: episodes.isEmpty
+        ? null
+        : episodes[currentIndex.clamp(0, episodes.length - 1)].number,
+    onSelected: onSelected,
+    keyPrefix: keyPrefix,
   );
 }

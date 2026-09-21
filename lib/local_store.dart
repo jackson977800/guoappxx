@@ -7,6 +7,7 @@ import 'local_profiles.dart';
 import 'local_snapshot.dart';
 import 'models.dart';
 import 'playback_preferences.dart';
+import 'download_preferences.dart';
 import 'catalog_sort.dart';
 import 'follow_state.dart';
 
@@ -185,6 +186,18 @@ class LocalStore extends ChangeNotifier {
         : sources.firstOrNull?.id ?? '';
   }
 
+  DownloadPreferences get downloadPreferences {
+    if (locked) return const DownloadPreferences();
+    try {
+      return DownloadPreferences.fromJson(
+        jsonDecode(_string(_key('downloadPreferences')) ?? '{}')
+            as Map<String, dynamic>,
+      );
+    } catch (_) {
+      return const DownloadPreferences();
+    }
+  }
+
   PlaybackPreferences get playbackPreferences {
     if (locked) return const PlaybackPreferences();
     try {
@@ -316,6 +329,11 @@ class LocalStore extends ChangeNotifier {
   Future<void> setPlaybackPreferences(PlaybackPreferences value) {
     PlaybackPreferences.fromJson(value.toJson());
     return _setting(_key('playback'), jsonEncode(value.toJson()));
+  }
+
+  Future<void> setDownloadPreferences(DownloadPreferences value) {
+    DownloadPreferences.fromJson(value.toJson());
+    return _setting(_key('downloadPreferences'), jsonEncode(value.toJson()));
   }
 
   Future<void> toggleFavorite(Drama drama) {
@@ -689,6 +707,9 @@ class LocalStore extends ChangeNotifier {
             'playback': jsonDecode(
               _string(_key('playback', profile.id)) ?? '{}',
             ),
+            'downloadPreferences': jsonDecode(
+              _string(_key('downloadPreferences', profile.id)) ?? '{}',
+            ),
             'catalogView': jsonDecode(
               _string(_key('catalogView', profile.id)) ?? '{}',
             ),
@@ -745,6 +766,9 @@ class LocalStore extends ChangeNotifier {
       PlaybackPreferences.fromJson(
         Map<String, dynamic>.from(library['playback'] as Map? ?? {}),
       );
+      DownloadPreferences.fromJson(
+        Map<String, dynamic>.from(library['downloadPreferences'] as Map? ?? {}),
+      );
       CatalogView.fromJson(
         Map<String, dynamic>.from(library['catalogView'] as Map? ?? {}),
       );
@@ -789,6 +813,9 @@ class LocalStore extends ChangeNotifier {
         _key('source', profile.id): library['source'] as String,
         _key('hideVip', profile.id): library['hideVip'] as bool,
         _key('playback', profile.id): jsonEncode(library['playback'] ?? {}),
+        _key('downloadPreferences', profile.id): jsonEncode(
+          library['downloadPreferences'] ?? {},
+        ),
         _key('catalogView', profile.id): jsonEncode(
           library['catalogView'] ?? {},
         ),

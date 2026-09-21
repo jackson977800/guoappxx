@@ -1,12 +1,12 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -22,6 +22,9 @@ type nativeStreamAsset struct {
 	address     string
 	data        []byte
 	contentType string
+	total       int64
+	etag        string
+	modified    string
 }
 
 type nativeStreamSession struct {
@@ -40,6 +43,12 @@ type nativeStreamServer struct {
 	address    string
 	sessions   map[string]*nativeStreamSession
 	server     *http.Server
+}
+
+func (stream *nativeStreamServer) nativeRequest(request *http.Request) (*http.Response, error) {
+	client := *stream.downloader.client
+	client.Timeout = 0
+	return stream.downloader.doMediaRequestWithClient(request, &client)
 }
 
 var nativePlaylistURI = regexp.MustCompile(`URI="([^"]+)"`)
@@ -83,7 +92,10 @@ func (stream *nativeStreamServer) nativeOpen(media providerMedia) (string, strin
 	}
 	stream.sessions[token] = session
 	stream.mu.Unlock()
-	entry := nativeStreamAsset{address: media.URL, contentType: "application/vnd.apple.mpegurl"}
+	entry := nativeStreamAsset{address: media.URL, contentType: "video/mp4"}
+	if parsed, err := url.Parse(media.URL); err == nil && strings.HasSuffix(strings.ToLower(parsed.Path), ".m3u8") {
+		entry.contentType = "application/vnd.apple.mpegurl"
+	}
 	if media.Playlist != "" {
 		entry.data = []byte(media.Playlist)
 		entry.contentType = "application/vnd.apple.mpegurl"
@@ -119,7 +131,9 @@ func (stream *nativeStreamServer) nativeAsset(token string, session *nativeStrea
 	}
 	id := hex.EncodeToString(digest[:12]) + extension
 	session.mu.Lock()
-	session.assets[id] = asset
+	if previous, found := session.assets[id]; !found || len(previous.data) == 0 || len(asset.data) > 0 {
+		session.assets[id] = asset
+	}
 	session.mu.Unlock()
 	return stream.address + "/" + token + "/" + id
 }
@@ -221,11 +235,17 @@ func (stream *nativeStreamServer) nativeServe(writer http.ResponseWriter, reques
 		http.NotFound(writer, request)
 		return
 	}
-	ctx, cancel := context.WithTimeout(request.Context(), 60*time.Second)
+	ctx, cancel := context.WithCancel(request.Context())
 	defer cancel()
 	stop := context.AfterFunc(session.ctx, cancel)
 	defer stop()
 	writer.Header().Set("Cache-Control", "no-store")
+	if len(asset.data) > 0 && asset.total > int64(len(asset.data)) {
+		if stream.nativeServePrefix(ctx, writer, request, session, asset) {
+			return
+		}
+		asset.data = nil
+	}
 	if len(asset.data) > 0 {
 		if strings.Contains(asset.contentType, "mpegurl") {
 			body, err := stream.nativeRewrite(parts[0], session, string(asset.data), asset.address)
@@ -239,10 +259,10 @@ func (stream *nativeStreamServer) nativeServe(writer http.ResponseWriter, reques
 			}
 		} else {
 			writer.Header().Set("Content-Type", asset.contentType)
-			writer.Header().Set("Content-Length", fmt.Sprint(len(asset.data)))
-			if request.Method == http.MethodGet {
-				_, _ = writer.Write(asset.data)
+			if asset.etag != "" {
+				writer.Header().Set("ETag", asset.etag)
 			}
+			http.ServeContent(writer, request, parts[1], time.Time{}, bytes.NewReader(asset.data))
 		}
 		return
 	}
@@ -258,7 +278,7 @@ func (stream *nativeStreamServer) nativeServe(writer http.ResponseWriter, reques
 			upstream.Header.Set(name, value)
 		}
 	}
-	response, err := stream.downloader.doMediaRequest(upstream)
+	response, err := stream.nativeRequest(upstream)
 	if err != nil {
 		http.Error(writer, "读取媒体失败，请重试", http.StatusBadGateway)
 		return
@@ -271,7 +291,10 @@ func (stream *nativeStreamServer) nativeServe(writer http.ResponseWriter, reques
 		return
 	}
 	contentType := strings.ToLower(response.Header.Get("Content-Type"))
-	finalURL := response.Request.URL
+	finalURL := upstream.URL
+	if response.Request != nil && response.Request.URL != nil {
+		finalURL = response.Request.URL
+	}
 	playlist := strings.Contains(asset.contentType, "mpegurl") || strings.Contains(contentType, "mpegurl") || strings.HasSuffix(strings.ToLower(finalURL.Path), ".m3u8")
 	if playlist && request.Method == http.MethodHead {
 		writer.Header().Set("Content-Type", "application/vnd.apple.mpegurl")

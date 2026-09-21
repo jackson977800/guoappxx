@@ -18,6 +18,7 @@ import 'local_store.dart';
 import 'models.dart';
 import 'remote_widgets.dart';
 import 'widgets.dart';
+import 'vip_icon.dart';
 import 'settings_screen.dart';
 import 'profiles_screen.dart';
 import 'search_input.dart';
@@ -741,25 +742,57 @@ class _HomeScreenState extends State<HomeScreen> {
             actions: [
               if (_tab == 0) ...[
                 IconButton(
-                  key: const ValueKey('open-rankings'),
-                  tooltip: '榜单',
-                  icon: const Icon(Icons.leaderboard_outlined),
-                  onPressed: widget.store.sources.isEmpty
-                      ? null
-                      : _openRankings,
+                  tooltip: '排序与筛选 · ${widget.store.catalogView.sort.label}',
+                  onPressed: _chooseCatalogView,
+                  color:
+                      widget.store.catalogView.sort != CatalogSort.source ||
+                          widget.store.catalogView.release.isNotEmpty
+                      ? Theme.of(context).colorScheme.primary
+                      : null,
+                  icon: const Icon(Icons.sort_rounded),
                 ),
-                IconButton(
-                  key: const ValueKey('toggle-search'),
-                  tooltip: _searchVisible ? '收起搜索' : '搜索',
-                  icon: Icon(
-                    _searchVisible
-                        ? Icons.search_off_rounded
-                        : Icons.search_rounded,
+                if (widget.store.canDownload &&
+                    widget.repository.supportsDownloads)
+                  IconButton(
+                    key: const ValueKey('select-catalog-dramas'),
+                    tooltip: _selectionMode ? '取消多选' : '多选下载',
+                    onPressed: _selectionMode
+                        ? _cancelSelection
+                        : () => setState(() => _selectionMode = true),
+                    icon: Icon(
+                      _selectionMode
+                          ? Icons.close_rounded
+                          : Icons.checklist_rounded,
+                    ),
                   ),
-                  onPressed: _toggleSearch,
-                ),
+                if (_selectionMode)
+                  IconButton(
+                    tooltip: '全选当前',
+                    onPressed: _selectVisible,
+                    icon: const Icon(Icons.select_all_rounded),
+                  ),
+                if (!_selectionMode && constraints.maxWidth >= 480)
+                  IconButton(
+                    key: const ValueKey('open-rankings'),
+                    tooltip: '榜单',
+                    icon: const Icon(Icons.leaderboard_outlined),
+                    onPressed: widget.store.sources.isEmpty
+                        ? null
+                        : _openRankings,
+                  ),
+                if (!_selectionMode)
+                  IconButton(
+                    key: const ValueKey('toggle-search'),
+                    tooltip: _searchVisible ? '收起搜索' : '搜索',
+                    icon: Icon(
+                      _searchVisible
+                          ? Icons.search_off_rounded
+                          : Icons.search_rounded,
+                    ),
+                    onPressed: _toggleSearch,
+                  ),
               ],
-              if (_tab == 0)
+              if (_tab == 0 && !_selectionMode)
                 RefreshAction(
                   key: const ValueKey('catalog-refresh'),
                   loading:
@@ -775,7 +808,9 @@ class _HomeScreenState extends State<HomeScreen> {
               PopupMenuButton<String>(
                 tooltip: '更多',
                 onSelected: (value) {
-                  if (value == 'recommendations') {
+                  if (value == 'rankings') {
+                    _openRankings();
+                  } else if (value == 'recommendations') {
                     _pauseCatalog();
                     Navigator.push<void>(
                       context,
@@ -824,6 +859,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   }
                 },
                 itemBuilder: (_) => [
+                  if (_tab == 0 && constraints.maxWidth < 480)
+                    const PopupMenuItem(value: 'rankings', child: Text('榜单')),
                   if (widget.store.allowsSource('hongguo'))
                     const PopupMenuItem(
                       value: 'recommendations',
@@ -1069,37 +1106,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     context,
                     () => widget.store.setHideVip(!widget.store.hideVip),
                   ),
-                  icon: Icon(
-                    widget.store.hideVip
-                        ? Icons.visibility_off_outlined
-                        : Icons.visibility_outlined,
-                    size: 20,
-                  ),
-                ),
-              IconButton(
-                tooltip: '排序与筛选 · ${widget.store.catalogView.sort.label}',
-                onPressed: _chooseCatalogView,
-                color:
-                    widget.store.catalogView.sort != CatalogSort.source ||
-                        widget.store.catalogView.release.isNotEmpty
-                    ? Theme.of(context).colorScheme.primary
-                    : null,
-                icon: const Icon(Icons.sort_rounded, size: 22),
-              ),
-              if (widget.store.canDownload &&
-                  widget.repository.supportsDownloads)
-                IconButton(
-                  key: const ValueKey('select-catalog-dramas'),
-                  tooltip: _selectionMode ? '取消多选' : '多选下载',
-                  onPressed: _selectionMode
-                      ? _cancelSelection
-                      : () => setState(() => _selectionMode = true),
-                  icon: Icon(
-                    _selectionMode
-                        ? Icons.close_rounded
-                        : Icons.checklist_rounded,
-                    size: 22,
-                  ),
+                  icon: VipIcon(hidden: widget.store.hideVip),
                 ),
             ],
           ),
@@ -1287,8 +1294,6 @@ class _HomeScreenState extends State<HomeScreen> {
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
           Text('已选 ${_selectedDramas.length} 部'),
-          TextButton(onPressed: _selectVisible, child: const Text('全选当前')),
-          TextButton(onPressed: _cancelSelection, child: const Text('取消')),
           FilledButton.icon(
             key: const ValueKey('download-selected-dramas'),
             onPressed: _selectedDramas.isEmpty ? null : _downloadSelected,

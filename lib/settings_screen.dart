@@ -14,6 +14,7 @@ import 'profiles_screen.dart';
 import 'app_build.dart';
 import 'sources_screen.dart';
 import 'widgets.dart';
+import 'resource_settings_screen.dart';
 
 String storageSize(int bytes) {
   if (bytes < 0) return '暂不可用';
@@ -177,6 +178,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               if (widget.store.canDownload)
                 ListTile(
+                  leading: const Icon(Icons.download_outlined),
+                  title: const Text('下载偏好'),
+                  subtitle: Text(widget.store.downloadPreferences.qualityLabel),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute<void>(
+                      builder: (_) =>
+                          DownloadPreferencesScreen(store: widget.store),
+                    ),
+                  ),
+                ),
+              if (widget.store.canDownload)
+                ListTile(
                   leading: const Icon(Icons.folder_outlined),
                   title: const Text('下载目录与空间'),
                   subtitle: const Text('查看存储用量、迁移已下载文件'),
@@ -191,6 +206,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ),
               if (widget.store.profile.admin) ...[
+                ListTile(
+                  leading: const Icon(Icons.settings_ethernet_rounded),
+                  title: const Text('网络与资源'),
+                  subtitle: const Text('代理、目录请求间隔、下载并发与站源目录'),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute<void>(
+                      builder: (_) => ResourceSettingsScreen(
+                        repository: widget.repository,
+                        store: widget.store,
+                      ),
+                    ),
+                  ),
+                ),
                 SwitchListTile(
                   value: widget.store.autoExport,
                   title: const Text('下载完成后自动导出 Emby'),

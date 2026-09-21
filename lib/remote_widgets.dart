@@ -355,7 +355,14 @@ class RemoteEpisodeButton extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text('$number', style: const TextStyle(fontSize: 20)),
+          Flexible(
+            child: Text(
+              '$number',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 20),
+            ),
+          ),
           if (vip) ...[
             const SizedBox(width: 4),
             Icon(

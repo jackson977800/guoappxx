@@ -31,6 +31,8 @@ class BatchDownloadItem {
 class BatchDownloads extends ChangeNotifier {
   BatchDownloads(this.repository, this.store, Iterable<Drama> dramas)
     : _epoch = store.profileEpoch,
+      includeVip = store.downloadPreferences.includeVip,
+      quality = store.downloadPreferences.quality,
       items = {
         for (final drama in dramas) drama.id: BatchDownloadItem(drama),
       }.values.toList() {
@@ -48,8 +50,8 @@ class BatchDownloads extends ChangeNotifier {
   bool stopping = false;
   bool stopped = false;
   bool settingsLocked = false;
-  bool includeVip = false;
-  int quality = 0;
+  bool includeVip;
+  int quality;
   String warning = '';
   BatchDownloadItem? current;
 

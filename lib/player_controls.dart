@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 
 import 'player_interactions.dart';
+import 'playback_buffer.dart';
 import 'widgets.dart';
 
 class PlayerControls extends StatefulWidget {
@@ -263,7 +264,8 @@ class _PlayerControlsState extends State<PlayerControls> {
                             ),
                             if (!state.buffering &&
                                 widget.enabled &&
-                                constraints.maxHeight >= 260)
+                                constraints.maxHeight >=
+                                    (widget.fullscreen ? 420 : 300))
                               Center(
                                 child: Row(
                                   mainAxisSize: MainAxisSize.min,
@@ -349,9 +351,15 @@ class _PlayerControlsState extends State<PlayerControls> {
                                       },
                                     ),
                                   ),
+                                  if (constraints.maxHeight >= 240)
+                                    PlaybackBufferStatus(
+                                      player: widget.player,
+                                      enabled: widget.enabled,
+                                    ),
                                   Row(
                                     children: [
-                                      if (constraints.maxHeight < 260)
+                                      if (constraints.maxHeight <
+                                          (widget.fullscreen ? 420 : 300))
                                         IconButton(
                                           tooltip: state.playing ? '暂停' : '播放',
                                           onPressed: widget.enabled
@@ -398,7 +406,8 @@ class _PlayerControlsState extends State<PlayerControls> {
                                       ),
                                     ],
                                   ),
-                                  if (widget.fullscreen)
+                                  if (widget.fullscreen &&
+                                      constraints.maxHeight >= 240)
                                     SingleChildScrollView(
                                       scrollDirection: Axis.horizontal,
                                       child: Row(
