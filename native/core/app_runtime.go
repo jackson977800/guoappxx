@@ -84,23 +84,26 @@ type nativeDrama struct {
 }
 
 type nativeInput struct {
-	Board     string                  `json:"board"`
-	Entries   []nativeDownloadEpisode `json:"entries"`
-	JobID     string                  `json:"jobId"`
-	Command   string                  `json:"command"`
-	Action    string                  `json:"action"`
-	Directory string                  `json:"directory"`
-	Source    string                  `json:"source"`
-	Page      int                     `json:"page"`
-	Query     string                  `json:"query"`
-	Category  string                  `json:"category"`
-	Drama     nativeDrama             `json:"drama"`
-	Chapter   Chapter                 `json:"chapter"`
-	Index     int                     `json:"index"`
-	Quality   int                     `json:"quality"`
-	Session   string                  `json:"session"`
-	Sequence  int64                   `json:"sequence"`
-	Force     bool                    `json:"force"`
+	PlaybackSession string                  `json:"playbackSession"`
+	StartMS         int64                   `json:"startMs"`
+	DurationMS      int64                   `json:"durationMs"`
+	Board           string                  `json:"board"`
+	Entries         []nativeDownloadEpisode `json:"entries"`
+	JobID           string                  `json:"jobId"`
+	Command         string                  `json:"command"`
+	Action          string                  `json:"action"`
+	Directory       string                  `json:"directory"`
+	Source          string                  `json:"source"`
+	Page            int                     `json:"page"`
+	Query           string                  `json:"query"`
+	Category        string                  `json:"category"`
+	Drama           nativeDrama             `json:"drama"`
+	Chapter         Chapter                 `json:"chapter"`
+	Index           int                     `json:"index"`
+	Quality         int                     `json:"quality"`
+	Session         string                  `json:"session"`
+	Sequence        int64                   `json:"sequence"`
+	Force           bool                    `json:"force"`
 }
 
 type nativeCatalogResult struct {
@@ -115,6 +118,7 @@ type nativeCatalogResult struct {
 }
 
 type nativePlan struct {
+	DanmakuID  string            `json:"danmakuId,omitempty"`
 	Local      bool              `json:"local"`
 	URL        string            `json:"url"`
 	Headers    map[string]string `json:"headers"`
@@ -327,7 +331,7 @@ func nativeDispatch(input nativeInput) (any, error) {
 			nativeState.engine = engine
 		}
 		nativeState.Unlock()
-		return map[string]any{"version": "0.2.9", "standalone": true, "allSources": buildAllSources == "true"}, nil
+		return map[string]any{"version": "0.2.11", "standalone": true, "allSources": buildAllSources == "true"}, nil
 	}
 	engine := nativeState.engine
 	nativeState.Unlock()
@@ -337,10 +341,12 @@ func nativeDispatch(input nativeInput) (any, error) {
 	duration := 60 * time.Second
 	if input.Action == "moveDownloads" {
 		duration = 10 * time.Minute
+	} else if input.Action == "danmaku" {
+		duration = 10 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), duration)
 	defer cancel()
-	if input.Session != "" && (input.Action == "catalog" || input.Action == "categories" || input.Action == "suggestions" || input.Action == "recommendations" || input.Action == "metadata") {
+	if input.Action == "danmaku" || input.Session != "" && (input.Action == "catalog" || input.Action == "categories" || input.Action == "suggestions" || input.Action == "recommendations" || input.Action == "metadata") {
 		work, finish, err := engine.beginRead(ctx, input)
 		if err != nil {
 			return nil, err
@@ -349,6 +355,8 @@ func nativeDispatch(input nativeInput) (any, error) {
 		ctx = work
 	}
 	switch input.Action {
+	case "danmaku":
+		return engine.nativeDanmaku(ctx, input)
 	case "cancelRead":
 		engine.cancelRead(input)
 		return true, nil
@@ -642,9 +650,14 @@ func (engine *nativeEngine) nativeResolve(ctx context.Context, input nativeInput
 			return plan, err
 		}
 	}
-	media, err := engine.downloader.resolveProviderMedia(ctx, Task{DramaID: input.Drama.ID, DramaTitle: input.Drama.Title, Chapter: input.Chapter, Index: input.Index})
+	task := Task{DramaID: input.Drama.ID, DramaTitle: input.Drama.Title, Chapter: input.Chapter, Index: input.Index}
+	media, err := engine.downloader.resolveProviderMedia(ctx, task)
 	if err != nil {
 		return nativePlan{}, err
 	}
-	return engine.nativeOpenPlayback(ctx, nativePlaybackChoices(media, input.Quality))
+	choice := nativePlaybackChoices(media, input.Quality)
+	if series, video, valid := hongguoPlaybackIDs(task); valid {
+		choice.danmakuSeries, choice.danmakuVideo = series, video
+	}
+	return engine.nativeOpenPlayback(ctx, choice)
 }

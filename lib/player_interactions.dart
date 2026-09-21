@@ -16,6 +16,7 @@ class PlayerInteractions extends ChangeNotifier {
     required this.onTogglePlayback,
     required this.onFullscreen,
     required this.onEpisode,
+    this.onSeek,
   }) {
     _playing = player.stream.playing.listen((playing) {
       if (!playing) cancel();
@@ -28,6 +29,7 @@ class PlayerInteractions extends ChangeNotifier {
   final VoidCallback onTogglePlayback;
   final VoidCallback onFullscreen;
   final String Function(int direction) onEpisode;
+  final Future<void> Function(Duration)? onSeek;
   late final StreamSubscription<bool> _playing;
   Timer? _holdTimer;
   Timer? _hintTimer;
@@ -194,7 +196,7 @@ class PlayerInteractions extends ChangeNotifier {
     _endHold();
     final target = (player.state.position.inMilliseconds + seconds * 1000)
         .clamp(0, player.state.duration.inMilliseconds);
-    unawaited(player.seek(Duration(milliseconds: target)));
+    unawaited((onSeek ?? player.seek)(Duration(milliseconds: target)));
     hint('${seconds > 0 ? '快进至' : '后退至'} ${formatPosition(target / 1000)}');
   }
 

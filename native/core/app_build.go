@@ -37,7 +37,7 @@ func nativeDownloadAvailable(job nativeDownloadJob) bool {
 
 func nativeAuthorizeInput(input nativeInput) error {
 	switch input.Action {
-	case "recommendations", "cachedRecommendations", "suggestions":
+	case "recommendations", "cachedRecommendations", "suggestions", "danmaku":
 		if !nativeSourceAvailable(sourceHongguo) {
 			return errNativeBuildSource
 		}

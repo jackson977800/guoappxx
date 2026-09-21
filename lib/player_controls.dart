@@ -27,6 +27,7 @@ class PlayerControls extends StatefulWidget {
     required this.onFocusSurface,
     this.swipeEnabled = false,
     this.panelOpen = false,
+    this.onSeek,
   });
 
   final Player player;
@@ -47,6 +48,7 @@ class PlayerControls extends StatefulWidget {
   final VoidCallback onFocusSurface;
   final bool swipeEnabled;
   final bool panelOpen;
+  final Future<void> Function(Duration)? onSeek;
 
   @override
   State<PlayerControls> createState() => _PlayerControlsState();
@@ -335,7 +337,7 @@ class _PlayerControlsState extends State<PlayerControls> {
                                             },
                                       onChangeEnd: (value) {
                                         if (widget.enabled && duration > 0) {
-                                          widget.player.seek(
+                                          (widget.onSeek ?? widget.player.seek)(
                                             Duration(
                                               milliseconds: (value * 1000)
                                                   .round(),

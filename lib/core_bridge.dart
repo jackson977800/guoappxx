@@ -9,6 +9,7 @@ import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 
 import 'models.dart';
+import 'danmaku_models.dart';
 import 'background_downloads.dart';
 import 'local_store.dart';
 import 'app_build.dart';
@@ -65,6 +66,12 @@ class AppFailure implements Exception {
 
 abstract class AppRepository {
   final catalogUpdates = CatalogUpdates();
+  Future<void> cancelDanmaku() async {}
+  Future<DanmakuPage> danmaku(
+    PlaybackPlan plan, {
+    required int startMs,
+    required int durationMs,
+  }) async => throw AppFailure('当前环境不支持弹幕');
   Future<void> cancelCatalog() async {}
   Future<void> cancelSuggestions() async {}
   Future<void> cancelRecommendations() async {}
@@ -173,6 +180,32 @@ class NativeRepository extends AppRepository {
           });
         } catch (_) {}
       }),
+    );
+  }
+
+  @override
+  Future<void> cancelDanmaku() => _cancelReads('danmaku');
+
+  @override
+  Future<DanmakuPage> danmaku(
+    PlaybackPlan plan, {
+    required int startMs,
+    required int durationMs,
+  }) async {
+    _authorize('hongguo');
+    if (plan.local || plan.session.isEmpty || plan.danmakuId.isEmpty) {
+      throw AppFailure('本集暂不支持弹幕');
+    }
+    return DanmakuPage.fromJson(
+      await _read('danmaku', {
+        'action': 'danmaku',
+        'playbackSession': plan.session,
+        'startMs': startMs,
+        'durationMs': durationMs,
+      }),
+      episodeId: plan.danmakuId,
+      startMs: startMs,
+      durationMs: durationMs,
     );
   }
 
@@ -364,7 +397,8 @@ class NativeRepository extends AppRepository {
       }
       if (action == 'recommendations' ||
           action == 'cachedRecommendations' ||
-          action == 'suggestions') {
+          action == 'suggestions' ||
+          action == 'danmaku') {
         _authorize('hongguo');
       }
       if ({
@@ -407,7 +441,13 @@ class NativeRepository extends AppRepository {
       }
       final body = jsonEncode(input);
       final encoded = await Isolate.run(() => _nativeRequest(body)).timeout(
-        Duration(seconds: input['action'] == 'moveDownloads' ? 620 : 70),
+        Duration(
+          seconds: action == 'moveDownloads'
+              ? 620
+              : action == 'danmaku'
+              ? 15
+              : 70,
+        ),
       );
       final response = jsonDecode(encoded) as Map<String, dynamic>;
       if (response['ok'] != true) {
@@ -438,6 +478,7 @@ class NativeRepository extends AppRepository {
             'suggestions',
             'recommendations',
             'metadata',
+            'danmaku',
           }.contains(input['action'])) {
         unawaited(
           _call({

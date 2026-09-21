@@ -12,7 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 
 class FailingPreferences extends InMemorySharedPreferencesStore {
-  FailingPreferences(Map<String, Object> values) : super.withData(values);
+  FailingPreferences(super.data) : super.withData();
   String failure = '';
   int snapshots = 0;
 

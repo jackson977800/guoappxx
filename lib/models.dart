@@ -253,6 +253,7 @@ class PlaybackPlan {
     this.quality = 0,
     this.qualities = const [],
     this.session = '',
+    this.danmakuId = '',
     this.routeIndex = 0,
     this.routeCount = 1,
     this.local = false,
@@ -263,6 +264,7 @@ class PlaybackPlan {
   final int quality;
   final List<int> qualities;
   final String session;
+  final String danmakuId;
   final int routeIndex;
   final int routeCount;
   final bool local;
@@ -278,6 +280,7 @@ class PlaybackPlan {
     qualities: (json['qualities'] as List? ?? []).map(intValue).toSet().toList()
       ..sort((a, b) => b.compareTo(a)),
     session: json['session'] as String? ?? '',
+    danmakuId: json['danmakuId'] as String? ?? '',
     routeIndex: intValue(json['routeIndex']),
     routeCount: intValue(json['routeCount']) > 0
         ? intValue(json['routeCount'])
