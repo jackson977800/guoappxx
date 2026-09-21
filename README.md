@@ -1,8 +1,8 @@
 # 红果鉴 / 真果鉴
 
-Flutter 多端独立短剧应用，原名“短剧库 APP”。站源请求、解析、下载和播放均在设备上完成，不依赖旧项目或自建服务。当前源码：**0.2.10+16（开发快照，待集中验证与平台验收）**。最近已构建安装包仍为 0.2.8+14。
+Flutter 多端独立短剧应用，原名“短剧库 APP”。站源请求、解析、下载和播放均在设备上完成，不依赖旧项目或自建服务。当前版本：**0.2.10+16（开发快照，待集中验证与平台验收）**；已生成红果鉴 / 真果鉴两份 Android ARM64 Release 安装包。
 
-按用户 2026-09-21 的最新要求，当前优先完成功能，不做回归，只执行当前功能的必要测试与静态检查。0.2.10 接入追剧 / 历史完善、统一剧库更新和多剧批量下载，针对性检查已通过；本轮没有构建或设备验证，源码快照不代表可发布成品。
+按用户 2026-09-21 的最新要求，当前优先完成功能，不做回归，只执行当前功能的必要测试与静态检查。0.2.10 接入追剧 / 历史完善、统一剧库更新和多剧批量下载，针对性检查及 Android 打包检查已通过，未进行设备验证。
 
 | 编译方式 | 应用名称 | 可用站源 |
 | --- | --- | --- |
@@ -157,14 +157,21 @@ exports/
 
 ## 安装包与平台状态
 
-以下安装包与验收记录属于历史版本。0.2.10 本轮只交付源码和必要的针对性检查，没有生成新 APK、Windows ZIP 或 iOS 包，也没有进行平台验收。
+0.2.10+16 已完成 Android ARM64 打包与安装包检查，沿用与 0.2.8 相同的本机签名。Windows / iOS 仍待相应平台构建，本轮没有生成这两个平台的安装包，也没有进行设备验收。
 
 | 平台 | 包与状态 |
 | --- | --- |
-| Android 8.0+ 手机 | ARM64、ARMv7、x86_64 APK；普通手机选 `arm64-v8a`，Intel Android 才选 `x86_64` |
+| Android 8.0+ 手机 | 0.2.10+16 提供两版 `arm64-v8a` APK；ARMv7 / x86_64 构建脚本保留，目前仅有历史版本安装包 |
 | Windows 10/11 x64 | 完整 ZIP 解压后运行 `hongguojian.exe`，全站源版为 `zhenguojian.exe`，保留所有 DLL 和 `data`；完整包运行需 Windows / Actions |
 | Android TV | 与手机共用 APK，电视界面与遥控已覆盖自动化；待电视实机验收 |
 | iOS 15.1+ | 已加入工程、Go 核心链接、媒体依赖、文件管理和构建脚本；待 Xcode 构建与真机验收，没有已签名 IPA |
+
+| 当前版本 | 安装包 | 大小 |
+| --- | --- | --- |
+| 红果鉴，仅红果 | `dist/android/hongguojian-0.2.10+16-arm64-v8a.apk` | 30.4 MB |
+| 真果鉴，全部站源 | `dist/android/zhenguojian-0.2.10+16-arm64-v8a.apk` | 30.4 MB |
+
+两份安装包的 SHA256 校验值保存在 `dist/android/SHA256SUMS.txt`。应用名称、包名、版本、签名、包 CRC、ZIP 对齐和对应原生核心均已核对；实际运行行为仍待安装验收。
 
 从 0.2.6 起，Android APK 默认压缩原生 `.so` 库，对红果版和全站源版同时生效。系统在安装时解压原生库后加载，缩小安装包下载体积；安装后仍需保留解压后的原生库空间。
 
@@ -308,7 +315,7 @@ python3 scripts/finish_task.py --message "本次实际完成的变更"
 python3 scripts/sync_source.py --check
 ~~~
 
-尚未完成集中验证和平台验收时，使用带 `unverified` 的开发快照 tag。本轮为 `v0.2.10-unverified`，只表示源码可恢复及所列针对性检查通过，不标为完成验收的正式版本。源码同步一致性确认仍执行。
+尚未完成集中验证和平台验收时，使用带 `unverified` 的开发快照 tag。本轮打包修复为 `v0.2.10-unverified-task-20260921-055042`，表示源码可恢复及所列必要检查通过，不标为完成验收的正式版本。原 `v0.2.10-unverified` 功能快照保留。源码同步一致性确认仍执行。
 
 脚本同步纯源码到同级 `../guoapp`，保留 `.git` 历史，创建本地提交和带说明的 tag；默认 `v<版本号>`，同版本后续修复加时间后缀，不覆盖旧标签，不自动推送 GitHub。
 
@@ -459,12 +466,18 @@ git switch -c restore-v0.2.3 v0.2.3
 
 0.2.10+16 完成 P2-1 与 P2-2 的源码接入，Dart 格式与静态检查通过。默认红果版和全站源版各通过 **26 项新增功能针对性测试**，使用合成文字与分集数据，禁用远程图片；覆盖追剧记录与实际播放进度分离、已读基准、备份兼容与失败保留、用户隔离、共享更新任务与缓存续页、批量下载重试 / 停止，以及 360×640 和 1100×720 的大字布局。
 
-本轮只运行以下三份测试文件，没有执行全量 Flutter / Go 回归、构建、设备或模拟器测试，也没有请求站源图片：
+功能实施阶段执行了以下三份测试文件：
 
 ~~~sh
 flutter test --no-pub --dart-define=DISABLE_REMOTE_IMAGES=true test/follow_state_test.dart test/library_workflow_test.dart test/library_features_widget_test.dart
 flutter test --no-pub --dart-define=DISABLE_REMOTE_IMAGES=true --dart-define=ALL_SOURCES=true test/follow_state_test.dart test/library_workflow_test.dart test/library_features_widget_test.dart
 ~~~
+
+本次打包移除了 `app_cover_metadata.go` 中遗留的 `parseHuangguoSortDetail` 重复定义，统一复用详情元数据解析实现；Go 格式整理和 `TestNativeCoverMetadataRejectsOtherDramaAndKeepsCurrentHost` 定向测试通过，测试只解析合成元数据，不请求图片。
+
+红果鉴 / 真果鉴两份 ARM64 Release 构建和安装包检查已通过。每份 APK 的 17 个原生库均为 ARM64 ELF 并使用 ZIP DEFLATE 压缩，清单启用安装时解压；签名与 0.2.8 一致，包 CRC、ZIP 对齐、应用名称、包名、版本 `0.2.10`、ARM64 分包版本码 `2016` 和对应原生核心均正确。两份包及 `SHA256SUMS.txt` 已校验，构建与检查记录在 `build/packages-0210/`，对应 `release-default-arm64.log`、`release-all-sources-arm64.log`、`apk-default-verification.log` 和 `apk-all-sources-verification.log`。
+
+此次没有执行全量 Flutter / Go 回归、设备或模拟器测试，也没有请求站源图片。构建成功不代表新增功能已经完成平台验收。
 
 0.2.9 接入的播放器交互、分页 / 保存 / 本地用户恢复、红果推荐、资料模型、排序、全部站源和完整搜索等，仍按各待办行保留原有验收状态。本轮针对性测试不代表这些功能已完成集中验证；Android、Windows 原生行为与新增 TV 操作仍待平台验收。
 

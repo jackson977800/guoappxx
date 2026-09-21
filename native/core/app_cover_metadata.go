@@ -2,9 +2,7 @@ package core
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -115,61 +113,6 @@ func providerCoverAddress(value any, pageURL string) string {
 		}
 	}
 	return ""
-}
-
-func parseHuangguoSortDetail(body, pageURL string, patch Drama) (Drama, error) {
-	type entry struct {
-		Type      string `json:"@type"`
-		ID        string `json:"@id"`
-		URL       string `json:"url"`
-		Name      string `json:"name"`
-		Published string `json:"datePublished"`
-		Uploaded  string `json:"uploadDate"`
-		Image     any    `json:"image"`
-		Thumbnail any    `json:"thumbnailUrl"`
-	}
-	expected, _ := url.Parse(pageURL)
-	matched := false
-	for _, block := range rankingJSONLD.FindAllStringSubmatch(body, -1) {
-		var graph struct {
-			Graph []entry `json:"@graph"`
-			entry
-		}
-		if json.Unmarshal([]byte(block[1]), &graph) != nil {
-			continue
-		}
-		for _, row := range append(graph.Graph, graph.entry) {
-			if row.Type != "WebPage" && row.Type != "VideoObject" && row.Type != "TVSeries" && row.Type != "Movie" {
-				continue
-			}
-			actual, err := url.Parse(firstNonEmpty(row.URL, row.ID))
-			if err != nil || actual.Host != "" && !strings.EqualFold(actual.Host, expected.Host) && providerSourceForURL(actual.String()) != patch.Source || strings.TrimRight(actual.Path, "/") != strings.TrimRight(expected.Path, "/") || row.Name == "" || patch.Source == sourceHuangguoAI && huangguoTitleNeedsRepair(row.Name, patch.SourceID) {
-				continue
-			}
-			matched = true
-			patch.Title = row.Name
-			if address := firstNonEmpty(providerCoverAddress(row.Image, pageURL), providerCoverAddress(row.Thumbnail, pageURL)); address != "" {
-				patch.Cover, patch.CoverURL = address, address
-			}
-			if date := providerReleaseDate(firstNonEmpty(row.Uploaded, row.Published)); date != "" && (patch.OnlineDate == "" || row.Type == "VideoObject") {
-				patch.OnlineDate = date
-			}
-		}
-	}
-	if !matched {
-		return patch, fmt.Errorf("黄果详情没有返回所请求剧集的元数据")
-	}
-	if nativeNormalize(patch).Cover == "" {
-		for _, tag := range coverMetaTag.FindAllString(body, -1) {
-			if strings.ToLower(extractAttr(tag, "property", "name")) == "og:image" {
-				if address := providerCoverAddress(extractAttr(tag, "content"), pageURL); address != "" {
-					patch.Cover, patch.CoverURL = address, address
-					break
-				}
-			}
-		}
-	}
-	return patch, nil
 }
 
 func hongguoCoverAddress(values ...string) string {
