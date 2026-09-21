@@ -15,6 +15,7 @@ import 'app_build.dart';
 import 'sources_screen.dart';
 import 'widgets.dart';
 import 'resource_settings_screen.dart';
+import 'lan_screen.dart';
 
 String storageSize(int bytes) {
   if (bytes < 0) return '暂不可用';
@@ -141,6 +142,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              ListTile(
+                key: const ValueKey('lan-settings'),
+                leading: const Icon(Icons.devices_rounded),
+                title: const Text('设备互联'),
+                subtitle: const Text('局域网自动同步追剧与推送播放'),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: () => openLanSync(context),
+              ),
               if (widget.repository.supportsSourceManagement)
                 ListTile(
                   leading: const Icon(Icons.dns_outlined),

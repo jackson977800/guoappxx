@@ -6,6 +6,7 @@ import 'package:media_kit/media_kit.dart';
 import 'player_interactions.dart';
 import 'playback_buffer.dart';
 import 'widgets.dart';
+import 'lan_screen.dart';
 
 class PlayerControls extends StatefulWidget {
   const PlayerControls({
@@ -29,6 +30,7 @@ class PlayerControls extends StatefulWidget {
     this.swipeEnabled = false,
     this.panelOpen = false,
     this.onSeek,
+    this.onPush,
   });
 
   final Player player;
@@ -50,6 +52,7 @@ class PlayerControls extends StatefulWidget {
   final bool swipeEnabled;
   final bool panelOpen;
   final Future<void> Function(Duration)? onSeek;
+  final Future<void> Function()? onPush;
 
   @override
   State<PlayerControls> createState() => _PlayerControlsState();
@@ -253,6 +256,16 @@ class _PlayerControlsState extends State<PlayerControls> {
                                       overflow: TextOverflow.ellipsis,
                                     ),
                                   ),
+                                  if (widget.fullscreen &&
+                                      widget.onPush != null)
+                                    LanPushButton(
+                                      key: const ValueKey(
+                                        'fullscreen-lan-push',
+                                      ),
+                                      onPressed: widget.enabled
+                                          ? () => _panel(widget.onPush!)
+                                          : null,
+                                    ),
                                   IconButton(
                                     key: const ValueKey('player-settings'),
                                     tooltip: '播放设置',

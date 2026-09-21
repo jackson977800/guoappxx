@@ -15,6 +15,7 @@ import 'rankings_screen.dart';
 import 'detail_screen.dart';
 import 'downloads_screen.dart';
 import 'local_store.dart';
+import 'lan_screen.dart';
 import 'models.dart';
 import 'remote_widgets.dart';
 import 'widgets.dart';
@@ -740,6 +741,13 @@ class _HomeScreenState extends State<HomeScreen> {
                   )
                 : const Text(appName),
             actions: [
+              if (_tab == 1)
+                IconButton(
+                  key: const ValueKey('follow-lan-sync'),
+                  tooltip: '追剧同步',
+                  onPressed: () => openLanSync(context),
+                  icon: const Icon(Icons.sync_rounded),
+                ),
               if (_tab == 0) ...[
                 IconButton(
                   tooltip: '排序与筛选 · ${widget.store.catalogView.sort.label}',

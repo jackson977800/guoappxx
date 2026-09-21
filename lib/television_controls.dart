@@ -23,6 +23,7 @@ class TelevisionControls extends StatefulWidget {
     required this.onEpisodes,
     required this.onSettings,
     required this.onBack,
+    this.onPush,
   });
   final Player player;
   final String title;
@@ -34,6 +35,7 @@ class TelevisionControls extends StatefulWidget {
   final Future<void> Function() onEpisodes;
   final Future<void> Function() onSettings;
   final VoidCallback onBack;
+  final Future<void> Function()? onPush;
 
   @override
   State<TelevisionControls> createState() => _TelevisionControlsState();
@@ -44,6 +46,7 @@ class _TelevisionControlsState extends State<TelevisionControls> {
   final _play = FocusNode(debugLabel: 'tv-player-play');
   final _episodes = FocusNode(debugLabel: 'tv-player-episodes');
   final _settings = FocusNode(debugLabel: 'tv-player-settings');
+  final _push = FocusNode(debugLabel: 'tv-player-push');
   final _progress = FocusNode(debugLabel: 'tv-player-progress');
   final _subscriptions = <StreamSubscription<dynamic>>[];
   Timer? _hideTimer;
@@ -214,7 +217,14 @@ class _TelevisionControlsState extends State<TelevisionControls> {
     for (final subscription in _subscriptions) {
       subscription.cancel();
     }
-    for (final node in [_surface, _play, _episodes, _settings, _progress]) {
+    for (final node in [
+      _surface,
+      _play,
+      _episodes,
+      _settings,
+      _progress,
+      _push,
+    ]) {
       node.dispose();
     }
     super.dispose();
@@ -393,6 +403,15 @@ class _TelevisionControlsState extends State<TelevisionControls> {
                               onPressed: () =>
                                   _openPanel(widget.onEpisodes, _episodes),
                             ),
+                            if (widget.onPush != null)
+                              RemoteButton(
+                                key: const ValueKey('tv-lan-push'),
+                                label: '推送',
+                                icon: Icons.cast_rounded,
+                                focusNode: _push,
+                                onPressed: () =>
+                                    _openPanel(widget.onPush!, _push),
+                              ),
                             RemoteButton(
                               key: const ValueKey('tv-settings'),
                               label: '播放设置',

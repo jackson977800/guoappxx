@@ -10,6 +10,9 @@ import 'playback_preferences.dart';
 import 'download_preferences.dart';
 import 'catalog_sort.dart';
 import 'follow_state.dart';
+import 'lan_sync_models.dart';
+
+part 'local_store_sync.dart';
 
 class LocalStore extends ChangeNotifier {
   LocalStore(this.preferences) {
@@ -18,6 +21,11 @@ class LocalStore extends ChangeNotifier {
 
   final SharedPreferences preferences;
   LocalSnapshot? _snapshot;
+  LanDocument? _lanDocumentCache;
+  int _lanRevision = 0;
+  int _lanUrgentRevision = 0;
+  int get lanRevision => _lanRevision;
+  int get lanUrgentRevision => _lanUrgentRevision;
   final Map<String, WatchEntry> _history = {};
   final Map<String, Drama> _favorites = {};
   final Map<String, FollowState> _followStates = {};
@@ -109,6 +117,7 @@ class LocalStore extends ChangeNotifier {
       SourceSite.values.where((site) => allowsSource(site.id)).toList();
 
   void _loadLibrary() {
+    _lanDocumentCache = null;
     _history.clear();
     _favorites.clear();
     _followStates.clear();
@@ -156,7 +165,12 @@ class LocalStore extends ChangeNotifier {
       .reversed
       .toList();
   WatchEntry? watched(String id) {
-    final entry = _history[id];
+    WatchEntry? entry = _history[id];
+    if (entry == null && isFavorite(id)) {
+      try {
+        entry = lanDocument.records[id]?.watch;
+      } catch (_) {}
+    }
     return entry != null && allowsSource(entry.drama.source) ? entry : null;
   }
 
@@ -276,6 +290,9 @@ class LocalStore extends ChangeNotifier {
     Map<String, Object> changes, {
     Iterable<String> remove = const [],
     bool replace = false,
+    bool trackSync = true,
+    bool syncUrgent = true,
+    Set<String> clearSyncProgress = const {},
   }) async {
     final snapshot = _snapshot;
     if (snapshot == null) throw StateError('请先恢复本地配置');
@@ -284,6 +301,13 @@ class LocalStore extends ChangeNotifier {
       values.remove(key);
     }
     values.addAll(changes);
+    if (trackSync && !replace) {
+      _trackLanChanges(
+        values,
+        keys: {...changes.keys, ...remove},
+        clearProgress: clearSyncProgress,
+      );
+    }
     values.putIfAbsent(
       'profiles',
       () => jsonEncode(_profiles.map((profile) => profile.toJson()).toList()),
@@ -291,6 +315,17 @@ class LocalStore extends ChangeNotifier {
     values.putIfAbsent('activeProfile', () => _current);
     try {
       await snapshot.commit(values);
+      if (trackSync &&
+          !replace &&
+          {...changes.keys, ...remove}.any(
+            (key) =>
+                key == _key('favorites') ||
+                key == _key('history') ||
+                key == _key('followStates'),
+          )) {
+        _lanRevision++;
+        if (syncUrgent) _lanUrgentRevision++;
+      }
     } on SnapshotRecoveryRequired catch (error) {
       _block(error.toString());
       _notify();
@@ -439,7 +474,7 @@ class LocalStore extends ChangeNotifier {
             favorites.values.map((entry) => entry.toJson()).toList(),
           ),
         },
-      });
+      }, syncUrgent: false);
       _loadLibrary();
       _notify();
     });
@@ -480,7 +515,11 @@ class LocalStore extends ChangeNotifier {
     final epoch = _epoch;
     return _queue(() async {
       if (locked || epoch != _epoch) return;
-      await _commit({}, remove: [_key('history')]);
+      await _commit(
+        {},
+        remove: [_key('history')],
+        clearSyncProgress: {..._history.keys, ...lanDocument.records.keys},
+      );
       _loadLibrary();
       _notify();
     });
@@ -491,11 +530,14 @@ class LocalStore extends ChangeNotifier {
     return _queue(() async {
       if (watched(id) == null || epoch != _epoch) return;
       final entries = Map.of(_history)..remove(id);
-      await _commit({
-        _key('history'): jsonEncode(
-          entries.values.map((entry) => entry.toJson()).toList(),
-        ),
-      });
+      await _commit(
+        {
+          _key('history'): jsonEncode(
+            entries.values.map((entry) => entry.toJson()).toList(),
+          ),
+        },
+        clearSyncProgress: {id},
+      );
       _loadLibrary();
       _notify();
     });
@@ -683,7 +725,7 @@ class LocalStore extends ChangeNotifier {
   Future<String> exportBackup() async {
     await _writes.catchError((Object _) {});
     _requireAdmin();
-    return jsonEncode({
+    final content = jsonEncode({
       'schema': 1,
       'app': 'zhenguojian',
       'profiles': _profiles.map((profile) => profile.toJson()).toList(),
@@ -694,6 +736,7 @@ class LocalStore extends ChangeNotifier {
       'libraries': {
         for (final profile in _profiles)
           profile.id: {
+            ..._backupFollowSync(profile.id),
             'history': readJsonList(_string(_key('history', profile.id))),
             'favorites': readJsonList(_string(_key('favorites', profile.id))),
             'followStates': jsonDecode(
@@ -719,6 +762,11 @@ class LocalStore extends ChangeNotifier {
           },
       },
     });
+    if (utf8.encode(content).length > 8 * 1024 * 1024) {
+      throw StateError('备份超过 8 MiB 保存上限，请先整理记录；尚未写出备份文件');
+    }
+    validateBackup(content);
+    return content;
   }
 
   Map<String, dynamic> validateBackup(String content) {
@@ -753,6 +801,7 @@ class LocalStore extends ChangeNotifier {
       }
       final states = library['followStates'] as Map? ?? {};
       final favoriteIds = favorites.map((row) => (row as Map)['id']).toSet();
+      _readBackupFollowSync(library);
       if (states.length > 20000 ||
           states.keys.any((id) => id is! String || !favoriteIds.contains(id))) {
         throw const FormatException('备份追剧状态无效');
@@ -801,7 +850,12 @@ class LocalStore extends ChangeNotifier {
     final libraries = data['libraries'] as Map;
     for (final profile in profiles) {
       final library = libraries[profile.id] as Map;
+      final syncRecords = _readBackupFollowSync(library);
       values.addAll({
+        if (syncRecords != null)
+          _key('lanRecords', profile.id): jsonEncode(
+            LanDocument(replica: lanID(), records: syncRecords).toJson(),
+          ),
         _key('history', profile.id): jsonEncode(library['history']),
         _key('favorites', profile.id): jsonEncode(library['favorites']),
         _key('followStates', profile.id): jsonEncode(

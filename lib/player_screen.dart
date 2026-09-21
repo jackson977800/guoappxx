@@ -25,6 +25,8 @@ import 'player_menu.dart';
 import 'television_controls.dart';
 import 'widgets.dart';
 import 'sources_screen.dart';
+import 'lan_controller.dart';
+import 'lan_screen.dart';
 
 class PlayerScreen extends StatefulWidget {
   const PlayerScreen({
@@ -39,6 +41,7 @@ class PlayerScreen extends StatefulWidget {
     this.mediaId,
     this.playerFactory,
     this.videoBuilder,
+    this.handoff,
   });
   final DramaDetail detail;
   final int initialIndex;
@@ -48,6 +51,7 @@ class PlayerScreen extends StatefulWidget {
   final String? mediaId;
   final AppRepository repository;
   final LocalStore store;
+  final LanIncomingPlayback? handoff;
   @visibleForTesting
   final Player Function()? playerFactory;
   @visibleForTesting
@@ -72,6 +76,10 @@ class _PlayerScreenState extends State<PlayerScreen>
   final _menuRevision = ValueNotifier<int>(0);
   final List<StreamSubscription<dynamic>> _subscriptions = [];
   final _recovery = PlaybackRecovery();
+  Object _lanIdentity = Object();
+  bool _handoffOwned = true;
+  double? _lanFirstPosition;
+  String? _savedProgressKey;
   final _health = PlaybackHealth();
   Timer? _saveTimer;
   Timer? _healthTimer;
@@ -132,7 +140,7 @@ class _PlayerScreenState extends State<PlayerScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _index = widget.initialIndex;
-    _profileEpoch = widget.store.profileEpoch;
+    _profileEpoch = widget.handoff?.profileEpoch ?? widget.store.profileEpoch;
     final preferences = widget.store.playbackPreferences;
     _speed = preferences.speed;
     _requestedQuality = preferences.quality;
@@ -203,7 +211,7 @@ class _PlayerScreenState extends State<PlayerScreen>
             _playIntent = false;
             _interactions.cancel();
             unawaited(_player.pause());
-            unawaited(_saveProgress());
+            unawaited(_saveProgress(flush: true));
           }
         }
       }),
@@ -215,6 +223,7 @@ class _PlayerScreenState extends State<PlayerScreen>
         }
         _syncDanmaku();
         _syncPreload();
+        _acknowledgeHandoff();
       }),
     );
     for (final stream in [
@@ -229,6 +238,7 @@ class _PlayerScreenState extends State<PlayerScreen>
         stream.listen((_) {
           _syncDanmaku();
           _syncPreload();
+          _acknowledgeHandoff();
         }),
       );
     }
@@ -262,7 +272,27 @@ class _PlayerScreenState extends State<PlayerScreen>
         unawaited(_recover());
       }
     });
-    _play(_index, position: widget.initialPosition);
+    final handoff = widget.handoff;
+    if (handoff != null) {
+      handoff.consumed = true;
+      handoff.stop = () async {
+        if (_handoffOwned && !_closed) await _stopForLan();
+      };
+    }
+    if (_profileEpoch != widget.store.profileEpoch ||
+        handoff?.cancelled == true) {
+      handoff?.fail('接收用户已变更，推送已取消');
+      if (handoff != null)
+        unawaited(widget.repository.release(handoff.plan.session));
+      _loading = false;
+      _error = '播放接收已取消';
+    } else {
+      _play(
+        _index,
+        position: widget.initialPosition,
+        handoffPlan: handoff?.plan,
+      );
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && !_closed) {
         widget.repository.catalogUpdates.publish(
@@ -277,12 +307,122 @@ class _PlayerScreenState extends State<PlayerScreen>
     if (!_closed &&
         (widget.store.profileEpoch != _profileEpoch || widget.store.locked)) {
       _preloader.clear();
+      _handoffOwned = false;
+      _playIntent = false;
+      widget.handoff?.fail('接收端用户已变更');
+      unawaited(_player.pause());
     }
     if (!_closed &&
         (widget.store.profileEpoch != _profileEpoch ||
             widget.store.locked ||
             !widget.store.allowsSource('hongguo'))) {
       _danmaku.setPlan(null);
+    }
+  }
+
+  void _attachLanPlayback() {
+    LanController.current?.attachPlayback(
+      LanPlaybackHost(
+        identity: _lanIdentity,
+        title:
+            widget.detail.drama.title +
+            ' · 第 ' +
+            widget.detail.episodes[_index].number.toString() +
+            ' 集',
+        stop: _stopForLan,
+      ),
+    );
+  }
+
+  void _acknowledgeHandoff() {
+    final handoff = widget.handoff;
+    if (!_handoffOwned ||
+        handoff == null ||
+        handoff.cancelled ||
+        handoff.started.isCompleted ||
+        _closed ||
+        _loading ||
+        _error != null ||
+        _openedIndex != _index ||
+        _index != widget.initialIndex ||
+        widget.store.profileEpoch != _profileEpoch)
+      return;
+    final state = _player.state;
+    final position = state.position.inMilliseconds / 1000;
+    final duration = state.duration.inMilliseconds / 1000;
+    if (duration > 0 && handoff.position > duration + 2) {
+      handoff.fail('续播位置超过接收端分集时长');
+      return;
+    }
+    if (!state.playing ||
+        state.buffering ||
+        (state.width ?? 0) <= 0 ||
+        position < handoff.position - .5 ||
+        position > handoff.position + 20)
+      return;
+    _lanFirstPosition ??= position;
+    if (position >= _lanFirstPosition! + .15) handoff.acknowledge(position);
+  }
+
+  Future<void> _stopForLan() async {
+    final generation = _generation;
+    await _serialize(() async {
+      if (_closed ||
+          generation != _generation ||
+          widget.store.profileEpoch != _profileEpoch)
+        return;
+      _playIntent = false;
+      _interactions.cancel();
+      _health.reset();
+      await _player.pause();
+      await _saveProgress(flush: true);
+    });
+  }
+
+  Future<void> _pushToDevice() async {
+    final link = LanController.current;
+    if (link == null ||
+        _panelOpen ||
+        _closed ||
+        _loading ||
+        _error != null ||
+        widget.mediaId != null)
+      return;
+    final generation = _generation;
+    final index = _index;
+    bool current() =>
+        mounted &&
+        !_closed &&
+        generation == _generation &&
+        index == _index &&
+        widget.store.profileEpoch == _profileEpoch;
+    _interactions.cancel();
+    setState(() => _panelOpen = true);
+    try {
+      await showLanPush(
+        context,
+        link,
+        snapshot: () => LanPlaybackIntent(
+          drama: widget.detail.drama,
+          episodeID: widget.detail.episodes[index].id,
+          episode: widget.detail.episodes[index].number,
+          position: _currentPosition,
+        ),
+        stillCurrent: current,
+        onAccepted: () async {
+          if (!current()) throw StateError('本机播放内容已变更');
+          await _stopForLan();
+          if (!current()) throw StateError('本机播放内容已变更');
+        },
+      );
+    } catch (error) {
+      if (mounted && !_closed) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    } finally {
+      if (mounted && !_closed) setState(() => _panelOpen = false);
     }
   }
 
@@ -380,7 +520,7 @@ class _PlayerScreenState extends State<PlayerScreen>
         state == AppLifecycleState.inactive) {
       _playIntent = false;
       _player.pause();
-      _saveProgress();
+      _saveProgress(flush: true);
     }
     if (_foreground && _pendingError) {
       _queueRecovery();
@@ -465,6 +605,8 @@ class _PlayerScreenState extends State<PlayerScreen>
 
   void _togglePlayback() {
     if (_closed || _loading || _error != null) return;
+    _handoffOwned = false;
+    widget.handoff?.fail('接收端已操作播放');
     _interactions.cancel();
     _playIntent = !_player.state.playing;
     _health.reset();
@@ -473,10 +615,11 @@ class _PlayerScreenState extends State<PlayerScreen>
       return;
     }
     unawaited(_player.playOrPause());
+    if (!_playIntent) unawaited(_saveProgress(flush: true));
     _syncDanmaku();
   }
 
-  Future<void> _saveProgress() async {
+  Future<void> _saveProgress({bool flush = false}) async {
     if (_openedIndex < 0 || widget.store.profileEpoch != _profileEpoch) {
       return;
     }
@@ -486,6 +629,12 @@ class _PlayerScreenState extends State<PlayerScreen>
       return;
     }
     final store = widget.store;
+    final progressKey =
+        '${widget.mediaId ?? widget.detail.drama.id}:$_openedIndex:$position:$duration';
+    if (_savedProgressKey == progressKey && _saveWarning == null) {
+      if (flush && widget.mediaId == null) LanController.current?.flush();
+      return;
+    }
     final entry = WatchEntry(
       drama: widget.repository.catalogUpdates.current(widget.detail.drama),
       episode: widget.detail.episodes[_openedIndex].number,
@@ -498,9 +647,11 @@ class _PlayerScreenState extends State<PlayerScreen>
       if (store.profileEpoch != _profileEpoch) return;
       if (widget.mediaId == null) {
         await store.saveWatch(entry);
+        if (flush) LanController.current?.flush();
       } else {
         await store.saveMediaWatch(widget.mediaId!, entry);
       }
+      _savedProgressKey = progressKey;
       if (mounted && !_closed && _saveWarning != null) {
         setState(() => _saveWarning = null);
       }
@@ -522,6 +673,7 @@ class _PlayerScreenState extends State<PlayerScreen>
     double position = 0,
     PlaybackRecoveryAction? recoveryAction,
     bool playWhenReady = true,
+    PlaybackPlan? handoffPlan,
   }) async {
     if (_closed ||
         widget.store.profileEpoch != _profileEpoch ||
@@ -530,16 +682,23 @@ class _PlayerScreenState extends State<PlayerScreen>
       return;
     }
     _interactions.cancel();
+    if (widget.handoff != null &&
+        handoffPlan == null &&
+        recoveryAction == null) {
+      _handoffOwned = false;
+      widget.handoff?.fail('接收端已更换播放内容');
+    }
     if (index != _index) _forceOnline = false;
     final warmed =
-        recoveryAction == null && _preloadEnabled && !widget.localOnly
-        ? _preloader.take(
-            widget.detail.drama,
-            widget.detail.episodes[index],
-            quality: _requestedQuality,
-            online: _forceOnline,
-          )
-        : null;
+        handoffPlan ??
+        (recoveryAction == null && _preloadEnabled && !widget.localOnly
+            ? _preloader.take(
+                widget.detail.drama,
+                widget.detail.episodes[index],
+                quality: _requestedQuality,
+                online: _forceOnline,
+              )
+            : null);
     _preloader.clear();
     final ticket = ++_generation;
     _seekSequence++;
@@ -564,6 +723,9 @@ class _PlayerScreenState extends State<PlayerScreen>
         _ => '正在准备播放',
       };
     });
+    LanController.current?.detachPlayback(_lanIdentity);
+    _lanIdentity = Object();
+    _attachLanPlayback();
     PlaybackPlan? prepared;
     PlaybackPlan? retained;
     bool installed = false;
@@ -572,7 +734,7 @@ class _PlayerScreenState extends State<PlayerScreen>
         if (_closed || ticket != _generation) {
           return;
         }
-        await _saveProgress();
+        await _saveProgress(flush: true);
         _openedIndex = -1;
         await _player.stop();
         final previous = _plan;
@@ -643,6 +805,7 @@ class _PlayerScreenState extends State<PlayerScreen>
           return;
         }
         _openedIndex = index;
+        _attachLanPlayback();
         _health.reset();
         await _interactions.applySpeed();
         if (mounted && !_closed && ticket == _generation) {
@@ -651,6 +814,7 @@ class _PlayerScreenState extends State<PlayerScreen>
           });
           _danmaku.setPlan(plan);
           _syncDanmaku();
+          _acknowledgeHandoff();
           _menuRevision.value++;
         }
       });
@@ -670,6 +834,7 @@ class _PlayerScreenState extends State<PlayerScreen>
                   (error is AppFailure && error.code == 'local_media') ||
                   (widget.localOnly && !_forceOnline);
               _error = error is AppFailure ? error.message : '无法播放这一集，请重试或换一集。';
+              widget.handoff?.fail(_error!);
             });
           }
         }
@@ -850,6 +1015,8 @@ class _PlayerScreenState extends State<PlayerScreen>
 
   Future<void> _seekTo(Duration target) async {
     if (_closed || _loading || _error != null) return;
+    _handoffOwned = false;
+    widget.handoff?.fail('接收端已调整播放位置');
     final ticket = ++_seekSequence;
     final generation = _generation;
     _danmaku.beginSeek();
@@ -952,6 +1119,8 @@ class _PlayerScreenState extends State<PlayerScreen>
   @override
   void dispose() {
     _closed = true;
+    LanController.current?.detachPlayback(_lanIdentity);
+    widget.handoff?.fail('接收端已退出播放');
     widget.store.removeListener(_accessChanged);
     _danmaku.dispose();
     _preloader.dispose();
@@ -963,7 +1132,7 @@ class _PlayerScreenState extends State<PlayerScreen>
     _interactions.dispose();
     _playerFocus.dispose();
     _menuRevision.dispose();
-    unawaited(_saveProgress());
+    unawaited(_saveProgress(flush: true));
     for (final subscription in _subscriptions) {
       subscription.cancel();
     }
@@ -1115,6 +1284,7 @@ class _PlayerScreenState extends State<PlayerScreen>
             onEpisodes: () => _televisionEpisodes(context),
             onSettings: () => _televisionSettings(context),
             onBack: _back,
+            onPush: widget.mediaId == null ? _pushToDevice : null,
           )
         : PlayerControls(
             player: _player,
@@ -1134,6 +1304,7 @@ class _PlayerScreenState extends State<PlayerScreen>
             onSpeed: () => _openPanel(PlayerMenuSection.speed),
             onQuality: () => _openPanel(PlayerMenuSection.quality),
             onSettings: () => _openPanel(PlayerMenuSection.settings),
+            onPush: widget.mediaId == null ? _pushToDevice : null,
             onPrevious: _index > 0 ? () => _play(_index - 1) : null,
             onNext: _index + 1 < widget.detail.episodes.length
                 ? () => _play(_index + 1)
@@ -1282,15 +1453,20 @@ class _PlayerScreenState extends State<PlayerScreen>
             icon: const Icon(Icons.skip_next_rounded),
           ),
           const Spacer(),
-          if (constraints.maxWidth >= 360)
+          if (constraints.maxWidth >= 440)
             TextButton(
               onPressed: () => _openPanel(PlayerMenuSection.speed),
               child: Text('${_speed}x'),
             ),
-          if (constraints.maxWidth >= 480)
+          if (constraints.maxWidth >= 560)
             TextButton(
               onPressed: () => _openPanel(PlayerMenuSection.quality),
               child: Text(_qualityLabel),
+            ),
+          if (widget.mediaId == null)
+            LanPushButton(
+              key: const ValueKey('player-lan-push'),
+              onPressed: _loading || _error != null ? null : _pushToDevice,
             ),
           IconButton(
             key: const ValueKey('player-danmaku-settings'),

@@ -78,6 +78,7 @@ type nativeDrama struct {
 }
 
 type nativeInput struct {
+	LAN              json.RawMessage         `json:"lan"`
 	ExpectedVersions map[string]string       `json:"expectedVersions"`
 	SystemProxy      nativeSystemProxy       `json:"systemProxy"`
 	Settings         nativeResourceSettings  `json:"settings"`
@@ -130,6 +131,8 @@ type nativePlan struct {
 }
 
 type nativeEngine struct {
+	lanMu            sync.Mutex
+	lan              *nativeLANServer
 	settingsMu       sync.Mutex
 	settings         nativeResourceSettings
 	readMu           sync.Mutex
@@ -333,7 +336,7 @@ func nativeDispatch(input nativeInput) (any, error) {
 			nativeState.engine = engine
 		}
 		nativeState.Unlock()
-		return map[string]any{"version": "0.2.12", "standalone": true, "allSources": buildAllSources == "true"}, nil
+		return map[string]any{"version": "0.2.13", "standalone": true, "allSources": buildAllSources == "true"}, nil
 	}
 	engine := nativeState.engine
 	nativeState.Unlock()
@@ -350,7 +353,7 @@ func nativeDispatch(input nativeInput) (any, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), duration)
 	defer cancel()
-	if input.Action == "danmaku" || input.Action == "preload" || input.Session != "" && (input.Action == "catalog" || input.Action == "categories" || input.Action == "suggestions" || input.Action == "recommendations" || input.Action == "metadata") {
+	if input.Action == "danmaku" || input.Action == "preload" || input.Action == "prepareHandoff" || input.Session != "" && (input.Action == "catalog" || input.Action == "categories" || input.Action == "suggestions" || input.Action == "recommendations" || input.Action == "metadata") {
 		work, finish, err := engine.beginRead(ctx, input)
 		if err != nil {
 			return nil, err
@@ -359,6 +362,8 @@ func nativeDispatch(input nativeInput) (any, error) {
 		ctx = work
 	}
 	switch input.Action {
+	case "lan":
+		return engine.nativeLAN(ctx, input.Command, input.LAN)
 	case "updateSystemProxy":
 		return true, engine.updateSystemProxy(input.SystemProxy)
 	case "resourceSettings":
@@ -369,6 +374,8 @@ func nativeDispatch(input nativeInput) (any, error) {
 		return engine.downloads.controlBatchExpected(ctx, input.JobIDs, input.Command, input.ExpectedVersions)
 	case "preload":
 		return engine.nativePreload(ctx, input)
+	case "prepareHandoff":
+		return engine.nativeResolve(ctx, input)
 	case "danmaku":
 		return engine.nativeDanmaku(ctx, input)
 	case "cancelRead":
@@ -661,7 +668,9 @@ func (engine *nativeEngine) nativeResolve(ctx context.Context, input nativeInput
 	}
 	if !input.Force && engine.downloads != nil {
 		if plan, found, err := engine.downloads.localPlan(input.Drama.ID, input.Index); found || err != nil {
-			return plan, err
+			if input.Action != "prepareHandoff" || !errors.Is(err, errNativeLocalFile) {
+				return plan, err
+			}
 		}
 	}
 	task := Task{DramaID: input.Drama.ID, DramaTitle: input.Drama.Title, Chapter: input.Chapter, Index: input.Index}
