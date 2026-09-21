@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'core_bridge.dart';
 import 'app_layout.dart';
@@ -327,6 +328,11 @@ class DramaTile extends StatelessWidget {
     this.subtitle,
     this.focusNode,
     this.onFocus,
+    this.actions,
+    this.badge,
+    this.selected,
+    this.onMore,
+    this.onLongPress,
   });
   final Drama drama;
   final AppRepository repository;
@@ -334,6 +340,11 @@ class DramaTile extends StatelessWidget {
   final String? subtitle;
   final FocusNode? focusNode;
   final VoidCallback? onFocus;
+  final Widget? actions;
+  final String? badge;
+  final bool? selected;
+  final VoidCallback? onMore;
+  final VoidCallback? onLongPress;
 
   static double titleHeight(BuildContext context) =>
       MediaQuery.textScalerOf(
@@ -359,7 +370,59 @@ class DramaTile extends StatelessWidget {
       children: [
         AspectRatio(
           aspectRatio: 2 / 3,
-          child: DramaCover(drama: drama, repository: repository),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              DramaCover(drama: drama, repository: repository),
+              if (badge != null && badge!.isNotEmpty)
+                Positioned(
+                  left: 6,
+                  right: 6,
+                  bottom: 6,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: .72),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 4,
+                      ),
+                      child: Text(
+                        badge!,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              if (actions != null && selected == null)
+                Positioned(top: 2, right: 2, child: actions!),
+              if (selected != null)
+                Positioned(
+                  top: 6,
+                  right: 6,
+                  child: CircleAvatar(
+                    radius: 16,
+                    backgroundColor: selected!
+                        ? Theme.of(context).colorScheme.primary
+                        : Colors.black.withValues(alpha: .64),
+                    child: Icon(
+                      selected! ? Icons.check_rounded : Icons.circle_outlined,
+                      size: 22,
+                      color: selected!
+                          ? Theme.of(context).colorScheme.onPrimary
+                          : Colors.white,
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ),
         const SizedBox(height: 9),
         Padding(
@@ -398,19 +461,29 @@ class DramaTile extends StatelessWidget {
       ],
     );
     if (television) {
-      return RemoteTarget(
-        focusNode: focusNode,
-        onFocus: onFocus,
-        onPressed: onTap,
-        label: '${drama.title}，${drama.episodes}集',
-        child: content,
+      return CallbackShortcuts(
+        bindings: {
+          const SingleActivator(LogicalKeyboardKey.contextMenu): ?onMore,
+        },
+        child: RemoteTarget(
+          focusNode: focusNode,
+          onFocus: onFocus,
+          onPressed: onTap,
+          selected: selected ?? false,
+          label:
+              '${drama.title}，${drama.episodes}集${badge == null ? '' : '，$badge'}',
+          child: content,
+        ),
       );
     }
     return Semantics(
       button: true,
+      selected: selected,
       label: '${drama.title}，${drama.episodes}集',
       child: InkWell(
         onTap: onTap,
+        onLongPress: onLongPress ?? onMore,
+        onSecondaryTap: onMore,
         borderRadius: BorderRadius.circular(14),
         child: content,
       ),

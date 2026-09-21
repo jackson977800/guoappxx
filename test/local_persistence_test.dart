@@ -128,6 +128,7 @@ void main() {
       backup['themeMode'] = 'light';
       final library = (backup['libraries'] as Map)['default'] as Map;
       library['favorites'] = [next.toJson()];
+      library['followStates'] = {};
       library['history'] = [
         WatchEntry(
           drama: next,

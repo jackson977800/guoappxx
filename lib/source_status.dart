@@ -57,6 +57,7 @@ class SourceStatus {
       added = intValue(json['added']),
       error = json['error'] as String? ?? '',
       storageError = json['storageError'] as String? ?? '',
+      startedAt = sourceTime(json['startedAt']),
       finishedAt = sourceTime(json['finishedAt']),
       retryAt = sourceTime(json['retryAt']),
       health = json['health'] is Map
@@ -68,7 +69,7 @@ class SourceStatus {
   final String source, operation, stage, error, storageError;
   final int count, page, completed, total, added, unknownVip;
   final bool hasMore, running;
-  final DateTime? updatedAt, finishedAt, retryAt;
+  final DateTime? updatedAt, startedAt, finishedAt, retryAt;
   final SourceHealth? health;
 
   int get retrySeconds {

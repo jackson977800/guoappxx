@@ -204,8 +204,9 @@ class NativeRepository extends AppRepository {
   Future<Drama?> supplementMetadata(Drama drama) async {
     if (!(drama.source == 'hongguo' && drama.onlineDate.isEmpty ||
         drama.source == 'huangdou' &&
-            (drama.heat.isEmpty || drama.vipStatus == null)))
+            (drama.heat.isEmpty || drama.vipStatus == null))) {
       return null;
+    }
     final result = await _read('metadata', {
       'action': 'metadata',
       'drama': drama.toJson(),

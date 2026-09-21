@@ -90,8 +90,9 @@ class PlayerInteractions extends ChangeNotifier {
       if (_disposed ||
           !available() ||
           !player.state.playing ||
-          player.state.completed)
+          player.state.completed) {
         return;
+      }
       _boosting = true;
       _held = true;
       unawaited(_setRate(3));
@@ -237,8 +238,9 @@ class PlayerInteractions extends ChangeNotifier {
       }
       return KeyEventResult.handled;
     }
-    if (hardware.isControlPressed || !available())
+    if (hardware.isControlPressed || !available()) {
       return KeyEventResult.ignored;
+    }
     if (key != LogicalKeyboardKey.arrowRight) _endHold();
     if (key == LogicalKeyboardKey.arrowRight) {
       if (event is KeyDownEvent) _beginHold(keyboard: true);
@@ -255,8 +257,9 @@ class PlayerInteractions extends ChangeNotifier {
       if (event is KeyDownEvent) toggleMute();
     } else if (key == LogicalKeyboardKey.mediaTrackNext ||
         key == LogicalKeyboardKey.mediaTrackPrevious) {
-      if (event is KeyDownEvent)
+      if (event is KeyDownEvent) {
         hint(onEpisode(key == LogicalKeyboardKey.mediaTrackNext ? 1 : -1));
+      }
     } else {
       return KeyEventResult.ignored;
     }

@@ -640,8 +640,9 @@ class _PlayerScreenState extends State<PlayerScreen>
   }
 
   Future<void> _setPreferences(PlaybackPreferences preferences) async {
-    if (_closed || widget.store.profileEpoch != _profileEpoch)
+    if (_closed || widget.store.profileEpoch != _profileEpoch) {
       throw StateError('当前用户已变更');
+    }
     _interactions.cancel();
     await widget.store.setPlaybackPreferences(preferences);
     if (!mounted || _closed) return;

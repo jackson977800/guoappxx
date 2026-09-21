@@ -13,6 +13,8 @@ import 'player_screen.dart';
 import 'remote_widgets.dart';
 import 'widgets.dart';
 import 'sources_screen.dart';
+import 'drama_actions.dart';
+import 'follow_state.dart';
 
 class DetailScreen extends StatefulWidget {
   const DetailScreen({
@@ -20,10 +22,14 @@ class DetailScreen extends StatefulWidget {
     required this.drama,
     required this.repository,
     required this.store,
+    this.resumeOnOpen = false,
+    this.downloadOnOpen = false,
   });
   final Drama drama;
   final AppRepository repository;
   final LocalStore store;
+  final bool resumeOnOpen;
+  final bool downloadOnOpen;
   @override
   State<DetailScreen> createState() => _DetailScreenState();
 }
@@ -33,6 +39,8 @@ class _DetailScreenState extends State<DetailScreen> {
   String? _error;
   bool _loading = true;
   int _generation = 0;
+  bool _initialActionHandled = false;
+  late final int _profileEpoch;
   Widget? get _sourceDiagnostics => widget.repository.supportsSourceManagement
       ? SourceDiagnosticsButton(
           repository: widget.repository,
@@ -44,6 +52,7 @@ class _DetailScreenState extends State<DetailScreen> {
   @override
   void initState() {
     super.initState();
+    _profileEpoch = widget.store.profileEpoch;
     widget.store.addListener(_onStoreChanged);
     _load();
   }
@@ -78,7 +87,9 @@ class _DetailScreenState extends State<DetailScreen> {
     });
     try {
       final detail = await widget.repository.detail(widget.drama);
-      if (!mounted || generation != _generation) {
+      if (!mounted ||
+          generation != _generation ||
+          _profileEpoch != widget.store.profileEpoch) {
         return;
       }
       final merged = widget.repository.catalogUpdates
@@ -91,6 +102,26 @@ class _DetailScreenState extends State<DetailScreen> {
       widget.repository.catalogUpdates.publish(merged, retryCover: true);
       unawaited(_supplement(merged, generation));
       await saveUserChange(context, () => widget.store.refreshDrama(merged));
+      if (mounted &&
+          generation == _generation &&
+          _profileEpoch == widget.store.profileEpoch &&
+          !_initialActionHandled &&
+          detail.episodes.isNotEmpty) {
+        _initialActionHandled = true;
+        if (widget.resumeOnOpen) {
+          unawaited(
+            _play(
+              resumeEpisodeIndex(
+                detail.episodes,
+                widget.store.watched(merged.id),
+              ),
+              resume: true,
+            ),
+          );
+        } else if (widget.downloadOnOpen && widget.store.canDownload) {
+          unawaited(_download());
+        }
+      }
     } catch (error) {
       if (!mounted || generation != _generation) {
         return;
@@ -112,8 +143,9 @@ class _DetailScreenState extends State<DetailScreen> {
       if (!mounted ||
           generation != _generation ||
           fresh == null ||
-          _detail == null)
+          _detail == null) {
         return;
+      }
       final updated = _detail!.drama.merge(fresh);
       setState(() {
         _detail = DramaDetail(
@@ -129,11 +161,20 @@ class _DetailScreenState extends State<DetailScreen> {
 
   Future<void> _download() async {
     final detail = _detail;
-    if (detail == null) return;
+    if (detail == null ||
+        !widget.store.canDownload ||
+        _profileEpoch != widget.store.profileEpoch) {
+      return;
+    }
     final selection = await Navigator.of(context).push<DownloadSelection>(
       MaterialPageRoute(builder: (_) => DownloadPicker(detail: detail)),
     );
-    if (selection == null || !mounted) return;
+    if (selection == null ||
+        !mounted ||
+        !widget.store.canDownload ||
+        _profileEpoch != widget.store.profileEpoch) {
+      return;
+    }
     try {
       final added = await widget.repository.enqueueDownloads(
         detail,
@@ -170,7 +211,11 @@ class _DetailScreenState extends State<DetailScreen> {
 
   Future<void> _play(int index, {bool resume = false}) async {
     final detail = _detail;
-    if (detail == null || index < 0 || index >= detail.episodes.length) {
+    if (detail == null ||
+        index < 0 ||
+        index >= detail.episodes.length ||
+        _profileEpoch != widget.store.profileEpoch ||
+        !widget.store.allowsSource(detail.drama.source)) {
       return;
     }
     if (detail.episodes[index].vip) {
@@ -203,7 +248,7 @@ class _DetailScreenState extends State<DetailScreen> {
             !saved!.finished
         ? saved.position
         : 0.0;
-    if (!mounted) {
+    if (!mounted || _profileEpoch != widget.store.profileEpoch) {
       return;
     }
     await Navigator.of(context).push(
@@ -226,18 +271,8 @@ class _DetailScreenState extends State<DetailScreen> {
   Widget build(BuildContext context) {
     final drama = _detail?.drama ?? widget.drama;
     final watched = widget.store.watched(drama.id);
-    var resumeIndex = 0;
     final episodes = _detail?.episodes ?? [];
-    if (watched != null && episodes.isNotEmpty) {
-      final found = episodes.indexWhere(
-        (episode) => episode.number == watched.episode,
-      );
-      if (found >= 0) {
-        resumeIndex = watched.finished && found + 1 < episodes.length
-            ? found + 1
-            : found;
-      }
-    }
+    final resumeIndex = resumeEpisodeIndex(episodes, watched);
     final television = AppLayout.isTelevision(context);
     return CallbackShortcuts(
       bindings: {
@@ -251,7 +286,7 @@ class _DetailScreenState extends State<DetailScreen> {
           toolbarHeight: television ? 64 : null,
           title: Text(drama.title, overflow: TextOverflow.ellipsis),
           actions: [
-            if (widget.repository.supportsDownloads)
+            if (widget.repository.supportsDownloads && widget.store.canDownload)
               IconButton(
                 tooltip: '下载选集',
                 onPressed: _loading || episodes.isEmpty ? null : _download,
@@ -285,6 +320,12 @@ class _DetailScreenState extends State<DetailScreen> {
                     constraints: const BoxConstraints(maxWidth: 1100),
                     child: CustomScrollView(
                       slivers: [
+                        SliverToBoxAdapter(
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                            child: _followingControls(drama),
+                          ),
+                        ),
                         SliverToBoxAdapter(
                           child: Padding(
                             padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
@@ -551,6 +592,36 @@ class _DetailScreenState extends State<DetailScreen> {
     );
   }
 
+  Widget _followingControls(Drama drama) {
+    final state = widget.store.following(drama.id);
+    return Wrap(
+      spacing: 8,
+      runSpacing: 4,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        TextButton.icon(
+          key: const ValueKey('follow-status'),
+          onPressed: () =>
+              showDramaActions(context, drama: drama, store: widget.store),
+          icon: Icon(
+            state?.status == FollowStatus.watched
+                ? Icons.check_circle_outline
+                : Icons.bookmark_outline,
+          ),
+          label: Text(state?.label ?? '追剧状态'),
+        ),
+        if (state != null && state.newEpisodes > 0)
+          ActionChip(
+            label: Text('${state.newEpisodes} 集更新 · 标为已读'),
+            onPressed: () => saveUserChange(
+              context,
+              () => widget.store.markUpdatesRead(drama.id),
+            ),
+          ),
+      ],
+    );
+  }
+
   Widget _televisionBody(
     Drama drama,
     List<Episode> episodes,
@@ -567,6 +638,8 @@ class _DetailScreenState extends State<DetailScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                _followingControls(drama),
+                const SizedBox(height: 8),
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [

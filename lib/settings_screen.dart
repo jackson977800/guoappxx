@@ -66,8 +66,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
     );
-    if (selected != null && mounted)
+    if (selected != null && mounted) {
       await saveUserChange(context, () => widget.store.setThemeMode(selected));
+    }
   }
 
   Future<void> _backup(bool restore) async {

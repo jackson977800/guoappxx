@@ -8,6 +8,7 @@ import 'local_snapshot.dart';
 import 'models.dart';
 import 'playback_preferences.dart';
 import 'catalog_sort.dart';
+import 'follow_state.dart';
 
 class LocalStore extends ChangeNotifier {
   LocalStore(this.preferences) {
@@ -18,6 +19,7 @@ class LocalStore extends ChangeNotifier {
   LocalSnapshot? _snapshot;
   final Map<String, WatchEntry> _history = {};
   final Map<String, Drama> _favorites = {};
+  final Map<String, FollowState> _followStates = {};
   Future<void> _writes = Future<void>.value();
   List<LocalProfile> _profiles = [];
   String _current = 'default';
@@ -81,6 +83,7 @@ class LocalStore extends ChangeNotifier {
     _current = 'default';
     _history.clear();
     _favorites.clear();
+    _followStates.clear();
     _epoch++;
   }
 
@@ -107,6 +110,7 @@ class LocalStore extends ChangeNotifier {
   void _loadLibrary() {
     _history.clear();
     _favorites.clear();
+    _followStates.clear();
     if (_configurationError != null) return;
     for (final row in readJsonList(_string(_key('history')))) {
       try {
@@ -119,6 +123,24 @@ class LocalStore extends ChangeNotifier {
         final drama = Drama.fromJson(row);
         _favorites[drama.id] = drama;
       } catch (_) {}
+    }
+    Map<String, dynamic> states = {};
+    try {
+      states = Map<String, dynamic>.from(
+        jsonDecode(_string(_key('followStates')) ?? '{}') as Map,
+      );
+    } catch (_) {}
+    for (final drama in _favorites.values) {
+      try {
+        _followStates[drama.id] = FollowState.fromJson(
+          Map<String, dynamic>.from(states[drama.id] as Map),
+        );
+      } catch (_) {
+        _followStates[drama.id] = FollowState.initial(
+          drama,
+          _history[drama.id],
+        );
+      }
     }
   }
 
@@ -139,6 +161,8 @@ class LocalStore extends ChangeNotifier {
 
   bool isFavorite(String id) =>
       _favorites[id] != null && allowsSource(_favorites[id]!.source);
+  FollowState? following(String id) =>
+      isFavorite(id) ? _followStates[id] : null;
   bool get hideVip =>
       _configurationError == null ? _bool(_key('hideVip')) ?? true : true;
   String get displayMode {
@@ -203,8 +227,9 @@ class LocalStore extends ChangeNotifier {
   Future<void> setCatalogSource(String source, {required bool allSources}) {
     final epoch = _epoch;
     return _queue(() async {
-      if (!allowsSource(source) || epoch != _epoch)
+      if (!allowsSource(source) || epoch != _epoch) {
         throw StateError('当前用户没有此站源权限');
+      }
       await _commit({
         _key('source'): source,
         _key('catalogView'): jsonEncode(
@@ -298,16 +323,63 @@ class LocalStore extends ChangeNotifier {
     return _queue(() async {
       if (!allowsSource(drama.source) || epoch != _epoch) return;
       final entries = Map.of(_favorites);
+      final states = Map.of(_followStates);
       if (entries.containsKey(drama.id)) {
         entries.remove(drama.id);
+        states.remove(drama.id);
       } else {
+        if (entries.length >= 20000) throw StateError('追剧数量已达上限，请先整理追剧');
         entries[drama.id] = drama;
+        states[drama.id] = FollowState.initial(drama, _history[drama.id]);
       }
       await _commit({
         _key('favorites'): jsonEncode(
           entries.values.map((entry) => entry.toJson()).toList(),
         ),
+        _key('followStates'): _encodeFollowStates(states),
       });
+      _loadLibrary();
+      _notify();
+    });
+  }
+
+  String _encodeFollowStates(Map<String, FollowState> states) => jsonEncode({
+    for (final entry in states.entries) entry.key: entry.value.toJson(),
+  });
+
+  Future<void> setFollowStatus(Drama drama, FollowStatus status) {
+    final epoch = _epoch;
+    return _queue(() async {
+      if (!allowsSource(drama.source) || epoch != _epoch) return;
+      if (!_favorites.containsKey(drama.id) && _favorites.length >= 20000) {
+        throw StateError('追剧数量已达上限，请先整理追剧');
+      }
+      final current = _favorites[drama.id]?.merge(drama) ?? drama;
+      final entries = Map.of(_favorites)..[drama.id] = current;
+      final state =
+          (_followStates[drama.id] ??
+                  FollowState.initial(current, _history[drama.id]))
+              .observe(current)
+              .withStatus(status);
+      final states = Map.of(_followStates)..[drama.id] = state;
+      await _commit({
+        _key('favorites'): jsonEncode(
+          entries.values.map((entry) => entry.toJson()).toList(),
+        ),
+        _key('followStates'): _encodeFollowStates(states),
+      });
+      _loadLibrary();
+      _notify();
+    });
+  }
+
+  Future<void> markUpdatesRead(String id) {
+    final epoch = _epoch;
+    return _queue(() async {
+      if (!isFavorite(id) || epoch != _epoch) return;
+      final states = Map.of(_followStates)
+        ..[id] = _followStates[id]!.markRead();
+      await _commit({_key('followStates'): _encodeFollowStates(states)});
       _loadLibrary();
       _notify();
     });
@@ -330,10 +402,25 @@ class LocalStore extends ChangeNotifier {
       final entries = Map.of(_history)..[entry.drama.id] = current;
       final sorted = entries.values.toList()
         ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      final following = _followStates[entry.drama.id];
+      final states = Map.of(_followStates);
+      final favorites = Map.of(_favorites);
+      if (following != null) {
+        states[entry.drama.id] = following.afterPlayback(current);
+        favorites[entry.drama.id] = favorites[entry.drama.id]!.merge(
+          current.drama,
+        );
+      }
       await _commit({
         _key('history'): jsonEncode(
           sorted.take(300).map((entry) => entry.toJson()).toList(),
         ),
+        if (following != null) ...{
+          _key('followStates'): _encodeFollowStates(states),
+          _key('favorites'): jsonEncode(
+            favorites.values.map((entry) => entry.toJson()).toList(),
+          ),
+        },
       });
       _loadLibrary();
       _notify();
@@ -356,8 +443,11 @@ class LocalStore extends ChangeNotifier {
   Future<void> saveMediaWatch(String id, WatchEntry entry) {
     final epoch = _epoch;
     return _queue(() async {
-      if (!canDownload || !allowsSource(entry.drama.source) || epoch != _epoch)
+      if (!canDownload ||
+          !allowsSource(entry.drama.source) ||
+          epoch != _epoch) {
         return;
+      }
       final data = jsonDecode(_string(_key('mediaHistory')) ?? '{}') as Map;
       data.remove(id);
       data[id] = entry.toJson();
@@ -378,31 +468,69 @@ class LocalStore extends ChangeNotifier {
     });
   }
 
-  Future<void> refreshDrama(Drama drama) {
+  Future<void> removeHistory(String id) {
     final epoch = _epoch;
     return _queue(() async {
-      if (!allowsSource(drama.source) || epoch != _epoch) return;
-      final changes = <String, Object>{};
-      if (_favorites.containsKey(drama.id)) {
-        final entries = Map.of(_favorites)
-          ..[drama.id] = _favorites[drama.id]!.merge(drama);
-        changes[_key('favorites')] = jsonEncode(
+      if (watched(id) == null || epoch != _epoch) return;
+      final entries = Map.of(_history)..remove(id);
+      await _commit({
+        _key('history'): jsonEncode(
           entries.values.map((entry) => entry.toJson()).toList(),
-        );
-      }
-      final watched = _history[drama.id];
-      if (watched != null) {
-        final entries = Map.of(_history)
-          ..[drama.id] = WatchEntry(
+        ),
+      });
+      _loadLibrary();
+      _notify();
+    });
+  }
+
+  Future<void> refreshDrama(Drama drama) => refreshDramas([drama]);
+
+  Future<void> refreshDramas(Iterable<Drama> dramas) {
+    final epoch = _epoch;
+    final updates = dramas.toList();
+    return _queue(() async {
+      if (locked || epoch != _epoch) return;
+      final changes = <String, Object>{};
+      final favorites = Map.of(_favorites);
+      final history = Map.of(_history);
+      final states = Map.of(_followStates);
+      for (final drama in updates) {
+        if (!allowsSource(drama.source)) continue;
+        final favorite = favorites[drama.id];
+        if (favorite != null) {
+          favorites[drama.id] = favorite.merge(drama);
+          states[drama.id] = states[drama.id]!.observe(favorites[drama.id]!);
+        }
+        final watched = history[drama.id];
+        if (watched != null) {
+          history[drama.id] = WatchEntry(
             drama: watched.drama.merge(drama),
             episode: watched.episode,
             position: watched.position,
             duration: watched.duration,
             updatedAt: watched.updatedAt,
           );
-        changes[_key('history')] = jsonEncode(
-          entries.values.map((entry) => entry.toJson()).toList(),
-        );
+        }
+      }
+      final favoriteJson = jsonEncode(
+        favorites.values.map((entry) => entry.toJson()).toList(),
+      );
+      final historyJson = jsonEncode(
+        history.values.map((entry) => entry.toJson()).toList(),
+      );
+      final statesJson = _encodeFollowStates(states);
+      if (favoriteJson !=
+          jsonEncode(
+            _favorites.values.map((entry) => entry.toJson()).toList(),
+          )) {
+        changes[_key('favorites')] = favoriteJson;
+      }
+      if (historyJson !=
+          jsonEncode(_history.values.map((entry) => entry.toJson()).toList())) {
+        changes[_key('history')] = historyJson;
+      }
+      if (statesJson != _encodeFollowStates(_followStates)) {
+        changes[_key('followStates')] = statesJson;
       }
       if (changes.isEmpty) return;
       await _commit(changes);
@@ -416,14 +544,16 @@ class LocalStore extends ChangeNotifier {
   }
 
   Future<void> _checkPin(LocalProfile target, String pin) async {
-    if (DateTime.now().isBefore(_retryAfter))
+    if (DateTime.now().isBefore(_retryAfter)) {
       throw StateError('密码输入过于频繁，请稍后再试');
+    }
     if (!await checkProfilePin(target, pin)) {
       _failures++;
-      if (_failures >= 3)
+      if (_failures >= 3) {
         _retryAfter = DateTime.now().add(
           Duration(seconds: (_failures * 2).clamp(0, 30)),
         );
+      }
       throw StateError('密码不正确');
     }
     _failures = 0;
@@ -458,28 +588,33 @@ class LocalStore extends ChangeNotifier {
     final old = _profiles.where((profile) => profile.id == id).firstOrNull;
     final targetId = old?.id ?? randomProfileToken();
     final cleanName = name.trim();
-    if (cleanName.isEmpty || cleanName.length > 40)
+    if (cleanName.isEmpty || cleanName.length > 40) {
       throw StateError('用户名需要 1 至 40 个字符');
+    }
     if (sources.any(
       (source) => !SourceSite.knownValues.any((site) => site.id == source),
-    ))
+    )) {
       throw StateError('站源无效');
+    }
     if (targetId != 'default' &&
         !_profiles.firstWhere((profile) => profile.admin).protected) {
       throw StateError('请先为管理员设置密码，再创建或修改其他用户');
     }
-    if (old == null && _profiles.length >= 20)
+    if (old == null && _profiles.length >= 20) {
       throw StateError('最多支持 20 个本地用户');
+    }
     var salt = old?.salt ?? '', hash = old?.pinHash ?? '';
     if (pin != null) {
       if (pin.isEmpty) {
-        if (targetId == 'default' && _profiles.length > 1)
+        if (targetId == 'default' && _profiles.length > 1) {
           throw StateError('存在其他用户时不能取消管理员密码');
+        }
         salt = '';
         hash = '';
       } else {
-        if (pin.length < 6 || pin.length > 128)
+        if (pin.length < 6 || pin.length > 128) {
           throw StateError('密码需要 6 至 128 个字符');
+        }
         salt = randomProfileToken();
         hash = await hashProfilePin(pin, salt);
       }
@@ -543,6 +678,9 @@ class LocalStore extends ChangeNotifier {
           profile.id: {
             'history': readJsonList(_string(_key('history', profile.id))),
             'favorites': readJsonList(_string(_key('favorites', profile.id))),
+            'followStates': jsonDecode(
+              _string(_key('followStates', profile.id)) ?? '{}',
+            ),
             'mediaHistory': jsonDecode(
               _string(_key('mediaHistory', profile.id)) ?? '{}',
             ),
@@ -563,11 +701,13 @@ class LocalStore extends ChangeNotifier {
   }
 
   Map<String, dynamic> validateBackup(String content) {
-    if (utf8.encode(content).length > 8 * 1024 * 1024)
+    if (utf8.encode(content).length > 8 * 1024 * 1024) {
       throw const FormatException('备份文件过大');
+    }
     final data = jsonDecode(content) as Map<String, dynamic>;
-    if (data['schema'] != 1 || data['app'] != 'zhenguojian')
+    if (data['schema'] != 1 || data['app'] != 'zhenguojian') {
       throw const FormatException('不支持的备份格式');
+    }
     final profiles = _readProfiles(data['profiles']);
     if (data.containsKey('themeMode') &&
         !{'light', 'dark', 'system'}.contains(data['themeMode'])) {
@@ -581,16 +721,27 @@ class LocalStore extends ChangeNotifier {
       final media = library['mediaHistory'] as Map? ?? {};
       if (media.length > 300 ||
           history.length > 300 ||
-          favorites.length > 20000)
+          favorites.length > 20000) {
         throw const FormatException('备份记录过多');
+      }
       for (final row in [...history, ...media.values]) {
         WatchEntry.fromJson(Map<String, dynamic>.from(row as Map));
       }
       for (final row in favorites) {
         Drama.fromJson(Map<String, dynamic>.from(row as Map));
       }
-      if (library['hideVip'] is! bool || library['source'] is! String)
+      final states = library['followStates'] as Map? ?? {};
+      final favoriteIds = favorites.map((row) => (row as Map)['id']).toSet();
+      if (states.length > 20000 ||
+          states.keys.any((id) => id is! String || !favoriteIds.contains(id))) {
+        throw const FormatException('备份追剧状态无效');
+      }
+      for (final row in states.values) {
+        FollowState.fromJson(Map<String, dynamic>.from(row as Map));
+      }
+      if (library['hideVip'] is! bool || library['source'] is! String) {
         throw const FormatException('备份设置无效');
+      }
       PlaybackPreferences.fromJson(
         Map<String, dynamic>.from(library['playback'] as Map? ?? {}),
       );
@@ -629,6 +780,9 @@ class LocalStore extends ChangeNotifier {
       values.addAll({
         _key('history', profile.id): jsonEncode(library['history']),
         _key('favorites', profile.id): jsonEncode(library['favorites']),
+        _key('followStates', profile.id): jsonEncode(
+          library['followStates'] ?? {},
+        ),
         _key('mediaHistory', profile.id): jsonEncode(
           library['mediaHistory'] ?? {},
         ),

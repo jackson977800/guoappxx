@@ -12,6 +12,7 @@ class LocalSnapshot {
   static const libraryKeys = {
     'history',
     'favorites',
+    'followStates',
     'mediaHistory',
     'source',
     'hideVip',
@@ -34,7 +35,7 @@ class LocalSnapshot {
       globalKeys.contains(key) ||
       libraryKeys.contains(key) ||
       RegExp(
-        r'^profile\.[a-zA-Z0-9_-]{1,64}\.(history|favorites|mediaHistory|source|hideVip|playback|catalogView|recentSearches)$',
+        r'^profile\.[a-zA-Z0-9_-]{1,64}\.(history|favorites|followStates|mediaHistory|source|hideVip|playback|catalogView|recentSearches)$',
       ).hasMatch(key);
 
   Map<String, Object> get values => Map.of(_values);
@@ -105,8 +106,9 @@ class LocalSnapshot {
           final restored = await _restore(previous);
           if (!restored) throw StateError('无法恢复原配置');
           await preferences.reload();
-          if (preferences.get(storageKey) != previous)
+          if (preferences.get(storageKey) != previous) {
             throw StateError('无法恢复原配置');
+          }
         }
       } catch (_) {
         throw const SnapshotRecoveryRequired();

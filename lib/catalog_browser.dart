@@ -54,23 +54,31 @@ class CatalogBrowser {
   void _remember(String source, Iterable<Drama> items) {
     final library = _library.putIfAbsent(source, () => {});
     for (final drama in items) {
-      if (drama.source == source)
+      if (drama.source == source) {
         library[drama.id] = library[drama.id]?.merge(drama) ?? drama;
+      }
     }
   }
 
   void updateDrama(Drama drama) {
-    final library = _library[drama.source];
-    if (library?.containsKey(drama.id) == true) {
-      library![drama.id] = library[drama.id]!.merge(drama);
+    updateDramas([drama]);
+  }
+
+  void updateDramas(Iterable<Drama> dramas) {
+    final updates = {for (final drama in dramas) drama.id: drama};
+    for (final drama in updates.values) {
+      final library = _library[drama.source];
+      if (library?.containsKey(drama.id) == true) {
+        library![drama.id] = library[drama.id]!.merge(drama);
+      }
     }
     for (final session in _sessions.values) {
-      final entry = session.entries[drama.source];
-      if (entry == null) continue;
-      entry.items = [
-        for (final item in entry.items)
-          item.id == drama.id ? item.merge(drama) : item,
-      ];
+      for (final entry in session.entries.values) {
+        entry.items = [
+          for (final item in entry.items)
+            updates[item.id] == null ? item : item.merge(updates[item.id]!),
+        ];
+      }
     }
   }
 
@@ -89,6 +97,7 @@ class CatalogBrowser {
   Future<String?> loadCategories(
     SourceGroup group, {
     bool force = false,
+    bool cacheOnly = false,
   }) async {
     final failures = <String>[];
     await _each(group.sources, (source) async {
@@ -96,6 +105,7 @@ class CatalogBrowser {
         final cached = await repository.cached(source.id);
         _remember(source.id, cached.items);
       } catch (_) {}
+      if (cacheOnly) return;
       try {
         _menus[source.id] = await repository.categories(
           source.id,
@@ -151,8 +161,12 @@ class CatalogBrowser {
     bool more = false,
     bool force = false,
     bool useCache = false,
+    bool cacheOnly = false,
     void Function(CatalogPage)? onCached,
   }) async {
+    if (cacheOnly && (more || force || query.trim().isNotEmpty)) {
+      throw AppFailure('缓存读取不能同时请求搜索或续页');
+    }
     final request = ++_generation;
     for (final session in _sessions.values) {
       session.generation++;
@@ -207,7 +221,7 @@ class CatalogBrowser {
       );
     }
 
-    if (useCache && !force && !more && query.isEmpty) {
+    if ((useCache || cacheOnly) && !force && !more && query.isEmpty) {
       await _each(sourceOrder, (source) async {
         try {
           final cached = await repository.cached(
@@ -223,11 +237,14 @@ class CatalogBrowser {
           entry.fresh = cached.fresh && cached.warning.isEmpty;
           if (cached.warning.isNotEmpty) failures[source] = cached.warning;
           _remember(source, cached.items);
-        } catch (_) {}
+        } catch (error) {
+          if (cacheOnly) failures[source] = error.toString();
+        }
       });
       if (generation != session.generation) return snapshot();
       final cached = snapshot();
       if (cached.items.isNotEmpty) onCached?.call(cached);
+      if (cacheOnly) return cached;
       if (cached.fresh && cached.items.isNotEmpty) return cached;
     }
 

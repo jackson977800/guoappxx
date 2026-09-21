@@ -101,8 +101,9 @@ class _PlayerControlsState extends State<PlayerControls> {
     if (!widget.enabled ||
         widget.panelOpen ||
         !widget.player.state.playing ||
-        _seekValue != null)
+        _seekValue != null) {
       return;
+    }
     _hideTimer = Timer(const Duration(seconds: 4), () {
       if (mounted &&
           widget.enabled &&
@@ -186,8 +187,9 @@ class _PlayerControlsState extends State<PlayerControls> {
                 behavior: HitTestBehavior.opaque,
                 onTap: _tap,
                 onDoubleTap: () {
-                  if (!widget.enabled || widget.interactions.suppressTap)
+                  if (!widget.enabled || widget.interactions.suppressTap) {
                     return;
+                  }
                   widget.onTogglePlayback();
                   _show();
                 },
