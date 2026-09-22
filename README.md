@@ -557,7 +557,7 @@ Android 使用可用的 Thermal API、供电与省电状态辅助决策；`getTh
 | 平台 | 包与状态 |
 | --- | --- |
 | Android 8.0+ 手机 | 0.2.15+21 提供两版 `arm64-v8a` APK；ARMv7 / x86_64 构建脚本保留，目前仅有历史版本安装包 |
-| Windows 10/11 x64 | 完整 ZIP 解压后运行 `hongguojian.exe`，全站源版为 `zhenguojian.exe`，保留所有 DLL 和 `data`；局域网原生发现依赖 Windows 10 1903+。完整包运行需 Windows / Actions，新增设备互联未验证 |
+| Windows 10/11 x64 | 完整 ZIP 解压后运行 `hongguojian.exe`，全站源版为 `zhenguojian.exe`，保留所有 DLL 和 `data`；局域网原生发现依赖 Windows 10 1903+。0.2.16+22 已由 Actions 构建并检查包内文件，运行器的自检在播放器开始播放一步超时（无音频和图形设备），未做设备验收 |
 | Android TV | 与手机共用 APK，旧版电视界面与遥控有自动化记录；0.2.12 选集 / 设置及 0.2.13 同步 / 推送操作未验证，待电视实机验收 |
 | iOS 15.1+ | 已加入工程、Go 核心链接、媒体依赖、文件管理、系统代理桥接、Bonjour / 局域网权限和构建脚本；待 Xcode 构建与真机验收，没有已签名 IPA |
 
