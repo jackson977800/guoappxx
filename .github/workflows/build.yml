@@ -255,7 +255,7 @@ jobs:
             printf '%s\n' "- *-armeabi-v7a.apk：较老的 32 位手机"
             printf '%s\n' "- *-x86_64.apk：模拟器"
             printf '\n%s\n' "iOS（未签名，需自行签名后才能安装）："
-            printf '%s\n' "- *-ios-unsigned-app.zip：未签名的 Runner.app，用 Xcode 或签名工具处理"
+            printf '%s\n' "- *-ios-unsigned.ipa：未签名 IPA，用 AltStore / Sideloadly / TrollStore 等工具自签后安装"
             printf '\n%s\n' "Windows（解压后运行 hongguojian.exe 或 zhenguojian.exe）："
             printf '%s\n' "- *-windows-x64.zip：Windows 10/11 x64 完整包；构建机没有音频和图形设备，播放自检未通过，未做设备验收"
             printf '\n%s\n' "校验：SHA256SUMS.txt"
@@ -264,6 +264,12 @@ jobs:
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" release/* --clobber
             gh release edit "$tag" --title "红果鉴 / 真果鉴 ${version}" --notes-file notes.md
+            # 清理上一次构建留下、本轮已不再产出的附件，避免下载到过期文件。
+            for name in $(gh release view "$tag" --json assets --jq '.assets[].name'); do
+              if [ ! -e "release/$name" ]; then
+                gh release delete-asset "$tag" "$name" --yes
+              fi
+            done
           else
             gh release create "$tag" release/* --title "红果鉴 / 真果鉴 ${version}" --notes-file notes.md
           fi
