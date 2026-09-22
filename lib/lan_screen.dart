@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'lan_controller.dart';
+import 'local_store.dart';
 import 'widgets.dart';
 
 IconData lanDeviceIcon(String kind) => switch (kind) {

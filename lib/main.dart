@@ -191,9 +191,10 @@ class DuanjuApp extends StatelessWidget {
   final GlobalKey<NavigatorState>? navigatorKey;
 
   @override
-  Widget build(BuildContext context) => store == null
-      ? _application()
-      : AnimatedBuilder(animation: store!, builder: (_, _) => _application());
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: Listenable.merge([store]),
+    builder: (_, _) => _application(),
+  );
 
   Widget _application() => MaterialApp(
     navigatorKey: navigatorKey,
