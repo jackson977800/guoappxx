@@ -552,6 +552,8 @@ Android 使用可用的 Thermal API、供电与省电状态辅助决策；`getTh
 
 0.2.15+21 已完成两版 Android ARM64 打包与安装包检查，签名与 0.2.10+16、0.2.14+20 一致，ARM64 分包版本码递增至 2021，可直接覆盖升级。此版本包含启动导航修复与首页多选、推荐、榜单的布局调整。Windows / iOS 完整应用仍待相应平台构建，本轮没有进行设备运行确认。
 
+0.2.16+22 的两版 Android 三种架构 APK 和两版未签名 iOS 包已由 GitHub Actions 构建，APK 使用固定发布证书签名并在构建中校验证书指纹，可从发布仓库的 Release 直接下载。构建通过只代表编译和打包完成，尚未进行设备安装、运行和真实站源验收。
+
 | 平台 | 包与状态 |
 | --- | --- |
 | Android 8.0+ 手机 | 0.2.15+21 提供两版 `arm64-v8a` APK；ARMv7 / x86_64 构建脚本保留，目前仅有历史版本安装包 |
@@ -582,7 +584,7 @@ Android 使用可用的 Thermal API、供电与省电状态辅助决策；`getTh
 | `hongguojian-windows` | `zhenguojian-windows` | 完整 ZIP 和 SHA256；从解压包检查原生核心、FFprobe、换封装及播放器启动 |
 | `hongguojian-ios-unsigned` | `zhenguojian-ios-unsigned` | 未签名 `.app` ZIP 和 SHA256，不能直接当已签名 IPA 安装 |
 
-Actions 分别传入默认参数与 `--all-sources` 构建两版，Flutter 和 Go 回归也覆盖两种编译配置。产物保留 14 天，不自动创建 GitHub Release。首次平台构建结果以实际 Actions 输出为准。
+Actions 分别传入默认参数与 `--all-sources` 构建两版，Flutter 和 Go 回归也覆盖两种编译配置。产物保留 14 天；`main` 分支构建成功后，`release` 任务再把两版 Android APK 和未签名 iOS 包发布到 GitHub Release（标签 `app-v<版本号>`，例如 `app-v0.2.16-22`），Release 附件长期保留且无需登录即可下载，重复构建会覆盖同名附件。当前发布仓库为 <https://github.com/chenweitian423/guoapp>，下载页 <https://github.com/chenweitian423/guoapp/releases>。附件名以 `hongguojian-`（红果鉴）或 `zhenguojian-`（真果鉴）开头，Android 按架构以 `arm64-v8a`、`armeabi-v7a`、`x86_64` 结尾，`SHA256SUMS.txt` 为校验清单。
 
 Android 正式发布持续使用同一签名并递增构建号，在仓库 Secrets 配置：
 
@@ -593,18 +595,18 @@ Android 正式发布持续使用同一签名并递增构建号，在仓库 Secre
 | `ANDROID_KEY_ALIAS` | 密钥别名 |
 | `ANDROID_KEY_PASSWORD` | 密钥密码 |
 
-未配置时生成预览 APK，不同构建机的预览签名可能无法相互覆盖。创建签名文件并保存到项目外：
+未配置时生成预览 APK，不同构建机的预览签名可能无法相互覆盖。当前发布签名文件为 `guoapp-release.jks`，别名 `guoapp`，证书 SHA-256 为 `3F:DC:07:A2:29:74:21:37:36:07:C0:98:F9:B8:47:C1:37:7D:92:66:EE:07:00:3B:9D:7F:DA:8C:4B:58:1D:8A`；更换签名文件会导致老版本无法覆盖升级。Android 构建后会自动校验 APK 的签名证书指纹，与上面不一致时直接失败。创建签名文件并保存到项目外：
 
 ~~~sh
-keytool -genkeypair -v -keystore zhenguojian-release.jks -storetype JKS -alias zhenguojian -keyalg RSA -keysize 2048 -validity 10000
+keytool -genkeypair -v -keystore guoapp-release.jks -storetype JKS -alias guoapp -keyalg RSA -keysize 2048 -validity 10000
 ~~~
 
 本地不入库的 `android/key.properties`：
 
 ~~~properties
-storeFile=/absolute/path/zhenguojian-release.jks
+storeFile=/absolute/path/guoapp-release.jks
 storePassword=你的密码
-keyAlias=zhenguojian
+keyAlias=guoapp
 keyPassword=你的密码
 ~~~
 
