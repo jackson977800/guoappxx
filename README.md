@@ -584,7 +584,7 @@ Android 使用可用的 Thermal API、供电与省电状态辅助决策；`getTh
 | `hongguojian-windows` | `zhenguojian-windows` | 完整 ZIP 和 SHA256；从解压包检查原生核心、FFprobe、换封装及播放器启动 |
 | `hongguojian-ios-unsigned` | `zhenguojian-ios-unsigned` | 未签名 `.app` ZIP 和 SHA256，不能直接当已签名 IPA 安装 |
 
-Actions 分别传入默认参数与 `--all-sources` 构建两版，Flutter 和 Go 回归也覆盖两种编译配置。产物保留 14 天；`main` 分支构建成功后，`release` 任务再把两版 Android APK 和未签名 iOS 包发布到 GitHub Release（标签 `app-v<版本号>`，例如 `app-v0.2.16-22`），Release 附件长期保留且无需登录即可下载，重复构建会覆盖同名附件。当前发布仓库为 <https://github.com/chenweitian423/guoapp>，下载页 <https://github.com/chenweitian423/guoapp/releases>。附件名以 `hongguojian-`（红果鉴）或 `zhenguojian-`（真果鉴）开头，Android 按架构以 `arm64-v8a`、`armeabi-v7a`、`x86_64` 结尾，`SHA256SUMS.txt` 为校验清单。
+Actions 分别传入默认参数与 `--all-sources` 构建两版，Flutter 和 Go 回归也覆盖两种编译配置。产物保留 14 天；`main` 分支的 Android 和 iOS 构建成功后，`release` 任务把两版安装包发布到 GitHub Release（标签 `app-v<版本号>`，例如 `app-v0.2.16-22`），Windows 包在通过时一并发布，Release 附件长期保留且无需登录即可下载，重复构建会覆盖同名附件。当前发布仓库为 <https://github.com/chenweitian423/guoapp>，下载页 <https://github.com/chenweitian423/guoapp/releases>。附件名以 `hongguojian-`（红果鉴）或 `zhenguojian-`（真果鉴）开头，Android 按架构以 `arm64-v8a`、`armeabi-v7a`、`x86_64` 结尾，`SHA256SUMS.txt` 为校验清单。
 
 Android 正式发布持续使用同一签名并递增构建号，在仓库 Secrets 配置：
 
