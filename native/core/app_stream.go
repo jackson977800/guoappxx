@@ -28,13 +28,14 @@ type nativeStreamAsset struct {
 }
 
 type nativeStreamSession struct {
-	mu       sync.Mutex
-	assets   map[string]nativeStreamAsset
-	referer  string
-	key      []byte
-	ctx      context.Context
-	cancel   context.CancelFunc
-	lastUsed time.Time
+	credentials *providerMediaCredentials
+	mu          sync.Mutex
+	assets      map[string]nativeStreamAsset
+	referer     string
+	key         []byte
+	ctx         context.Context
+	cancel      context.CancelFunc
+	lastUsed    time.Time
 }
 
 type nativeStreamServer struct {
@@ -71,8 +72,8 @@ func (stream *nativeStreamServer) nativeOpen(media providerMedia) (string, strin
 		panic(err)
 	}
 	token := hex.EncodeToString(tokenBytes)
-	ctx, cancel := context.WithCancel(context.Background())
-	session := &nativeStreamSession{assets: map[string]nativeStreamAsset{}, referer: media.Referer, key: media.HLSKey, ctx: ctx, cancel: cancel, lastUsed: time.Now()}
+	ctx, cancel := context.WithCancel(providerMediaContext(context.Background(), media.credentials))
+	session := &nativeStreamSession{assets: map[string]nativeStreamAsset{}, referer: media.Referer, key: media.HLSKey, ctx: ctx, cancel: cancel, lastUsed: time.Now(), credentials: media.credentials}
 	stream.mu.Lock()
 	for id, old := range stream.sessions {
 		if time.Since(old.lastUsed) > 10*time.Minute {
@@ -235,7 +236,7 @@ func (stream *nativeStreamServer) nativeServe(writer http.ResponseWriter, reques
 		http.NotFound(writer, request)
 		return
 	}
-	ctx, cancel := context.WithCancel(request.Context())
+	ctx, cancel := context.WithCancel(providerMediaContext(request.Context(), session.credentials))
 	defer cancel()
 	stop := context.AfterFunc(session.ctx, cancel)
 	defer stop()

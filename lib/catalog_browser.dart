@@ -272,7 +272,8 @@ class CatalogBrowser {
         entry.page = result.page;
         entry.nextPage = result.warning.isEmpty ? result.page + 1 : page;
         entry.hasMore =
-            query.isEmpty && (result.hasMore || result.warning.isNotEmpty);
+            (query.isEmpty || SourceSite.byId(source).pagedSearch) &&
+            (result.hasMore || result.warning.isNotEmpty);
         entry.fresh = result.fresh && result.warning.isEmpty;
         if (query.isEmpty) _remember(source, result.items);
         if (result.warning.isNotEmpty) {
@@ -283,7 +284,7 @@ class CatalogBrowser {
       } catch (error) {
         if (generation != session.generation) return;
         entry.nextPage = page;
-        entry.hasMore = query.isEmpty;
+        entry.hasMore = query.isEmpty || SourceSite.byId(source).pagedSearch;
         entry.fresh = false;
         failures[source] = error.toString();
       }

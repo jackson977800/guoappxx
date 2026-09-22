@@ -40,6 +40,9 @@ func (d *Downloader) nativeCoverAddress(ctx context.Context, drama nativeDrama) 
 			return "", errors.New("黄豆详情与请求剧集不符")
 		}
 		return fresh.Cover, nil
+	case sourceHuangju:
+		fresh, _, err := d.fetchHuangjuDetail(ctx, id)
+		return nativeNormalize(fresh).Cover, err
 	case sourceCloudFront:
 		if !rankingSourceID.MatchString(id) {
 			return "", errors.New("无效的黄果剧集 ID")

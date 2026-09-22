@@ -80,11 +80,27 @@ class LanConnection {
   bool autoSync;
 }
 
-Set<String> lanSources(Object? value) {
-  if (value is! List || value.length > SourceSite.knownValues.length) {
+const lanLegacySources = {
+  'hongguo',
+  'huangdou',
+  'huangguo-video',
+  'huangguoai',
+  'cloudfront',
+};
+
+Set<String> lanSources(Object? value, {bool advertised = false}) {
+  if (value is! List ||
+      value.length > (advertised ? 32 : SourceSite.knownValues.length)) {
     throw const FormatException('设备站源范围无效');
   }
   final result = value.map((source) => lanText(source, 32)).toSet();
+  if (advertised) {
+    return result
+        .where(
+          (source) => SourceSite.knownValues.any((site) => site.id == source),
+        )
+        .toSet();
+  }
   if (result.any(
     (source) => !SourceSite.knownValues.any((site) => site.id == source),
   )) {

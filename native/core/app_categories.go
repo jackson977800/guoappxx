@@ -57,6 +57,8 @@ func validNativeCategory(source, category string) bool {
 		return err == nil && id > 0
 	case sourceCloudFront:
 		return strings.TrimSpace(category) == category
+	case sourceHuangju:
+		return category == huangjuNewestCategory || validHuangjuID(category) && !strings.HasPrefix(category, "@")
 	}
 	return false
 }
@@ -98,6 +100,12 @@ func (engine *nativeEngine) nativeCategories(ctx context.Context, source string,
 		body, err = d.fetchProviderText(ctx, address, d.providerBaseURL(source)+"/")
 		if err == nil {
 			all = append(all, parseHuangguoVideoCategories(body)...)
+		}
+	case sourceHuangju:
+		var categories []nativeCategory
+		categories, err = d.fetchHuangjuCategories(ctx)
+		if err == nil {
+			all = append(all, categories...)
 		}
 	default:
 		return nil, errors.New("请选择有效站源")

@@ -83,6 +83,21 @@ class _HomeScreenState extends State<HomeScreen> {
           .firstOrNull ??
       SourceGroup(_source.groupId, _source.groupName, [_source]);
   bool get _onlineSearch => _group.sources.any((source) => source.onlineSearch);
+  bool get _searchSuggestions =>
+      _group.sources.any((source) => source.searchSuggestions);
+  String get _searchHint {
+    final online = _group.sources
+        .where((source) => source.onlineSearch)
+        .toList();
+    if (online.isEmpty) {
+      return '筛选本机已更新剧库';
+    }
+    final names = online.map((source) => source.name).join('、');
+    return online.length == _group.sources.length
+        ? '搜索${names}短剧'
+        : '搜索${names}及本机剧库';
+  }
+
   String get _category => _categorySelections[_group.id] ?? '';
   List<CatalogCategory> get _categories => _browser.categories(_group);
   String get _displayCategory =>
@@ -352,11 +367,11 @@ class _HomeScreenState extends State<HomeScreen> {
         title: _group.id == 'all'
             ? '搜索已开放站源'
             : _onlineSearch
-            ? '搜索红果短剧'
+            ? '搜索${_group.name}短剧'
             : '筛选当前已加载短剧',
         recentSearches: widget.store.recentSearches,
         onCancel: () => unawaited(widget.repository.cancelSuggestions()),
-        suggestions: _onlineSearch ? widget.repository.suggestions : null,
+        suggestions: _searchSuggestions ? widget.repository.suggestions : null,
       ),
     );
     if (query != null && mounted) {
@@ -798,6 +813,14 @@ class _HomeScreenState extends State<HomeScreen> {
                           : null,
                       icon: const Icon(Icons.sort_rounded),
                     ),
+                  IconButton(
+                    key: const ValueKey('open-rankings'),
+                    tooltip: '榜单',
+                    onPressed: widget.store.sources.isEmpty
+                        ? null
+                        : _openRankings,
+                    icon: const Icon(Icons.leaderboard_outlined),
+                  ),
                   if (!_showRecommendations &&
                       widget.store.canDownload &&
                       widget.repository.supportsDownloads)
@@ -818,7 +841,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     onPressed: _toggleSearch,
                   ),
                 ],
-                if (_tab == 0 && !_showRecommendations)
+                if (_tab == 0 &&
+                    !_showRecommendations &&
+                    constraints.maxWidth >= 400)
                   RefreshAction(
                     key: const ValueKey('catalog-refresh'),
                     loading:
@@ -836,7 +861,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 PopupMenuButton<String>(
                   tooltip: '更多',
                   onSelected: (value) {
-                    if (value == 'sources') {
+                    if (value == 'update') {
+                      _refreshCatalog();
+                    } else if (value == 'sources') {
                       _manageSources();
                     } else if (value == 'settings') {
                       Navigator.push(
@@ -874,6 +901,18 @@ class _HomeScreenState extends State<HomeScreen> {
                     }
                   },
                   itemBuilder: (_) => [
+                    if (_tab == 0 &&
+                        !_showRecommendations &&
+                        constraints.maxWidth < 400)
+                      PopupMenuItem(
+                        value: 'update',
+                        enabled:
+                            widget.store.sources.isNotEmpty &&
+                            !_group.sources.any(
+                              (source) => _updater.busy(source.id),
+                            ),
+                        child: const Text('更新剧库'),
+                      ),
                     if (widget.repository.supportsSourceManagement)
                       const PopupMenuItem(
                         value: 'sources',
@@ -1058,12 +1097,10 @@ class _HomeScreenState extends State<HomeScreen> {
               key: ValueKey('search-${_group.id}'),
               controller: _search,
               autofocus: true,
-              hint: _group.id == 'all'
-                  ? '搜索红果及其他站源已加载内容'
-                  : _onlineSearch
-                  ? '搜索红果短剧'
-                  : '筛选本机已更新剧库',
-              suggestions: _onlineSearch ? widget.repository.suggestions : null,
+              hint: _searchHint,
+              suggestions: _searchSuggestions
+                  ? widget.repository.suggestions
+                  : null,
               onChanged: _searchChanged,
               onCancel: () => unawaited(widget.repository.cancelSuggestions()),
               onSearch: _submitSearch,
@@ -1125,24 +1162,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   icon: VipIcon(hidden: widget.store.hideVip),
                 ),
-              Container(
-                width: 1,
-                height: 24,
-                color: Theme.of(context).colorScheme.outlineVariant,
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                child: TextButton.icon(
-                  key: const ValueKey('open-rankings'),
-                  onPressed: _openRankings,
-                  icon: const Icon(Icons.leaderboard_outlined, size: 20),
-                  label: const Text('榜单'),
-                  style: TextButton.styleFrom(
-                    minimumSize: const Size(48, 48),
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                  ),
-                ),
-              ),
             ],
           ),
         ),
@@ -1239,7 +1258,11 @@ class _HomeScreenState extends State<HomeScreen> {
                       onRetry:
                           _hasMore &&
                               !_loadingMore &&
-                              (!_onlineSearch || _search.text.isEmpty)
+                              (!_onlineSearch ||
+                                  _search.text.isEmpty ||
+                                  _group.sources.any(
+                                    (source) => source.pagedSearch,
+                                  ))
                           ? () => _load(more: true)
                           : null,
                       action: '加载更多',

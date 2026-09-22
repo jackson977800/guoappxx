@@ -188,6 +188,15 @@ class LanController extends ChangeNotifier with WidgetsBindingObserver {
     'autoSync': autoSync,
   };
 
+  Map<String, dynamic> _peerConfig() => {
+    ..._config(),
+    'sources': store.sources
+        .map((source) => source.id)
+        .where(lanLegacySources.contains)
+        .toList(),
+    'sourceOptions': store.sources.map((source) => source.id).toList(),
+  };
+
   void _storeChanged() {
     if (_disposed) return;
     try {
@@ -557,7 +566,7 @@ class LanController extends ChangeNotifier with WidgetsBindingObserver {
             'requestId': lanID(),
             'payload': {
               ...local!.toJson(),
-              ..._config(),
+              ..._peerConfig(),
               'returnToken': grant['token'],
               'expectedAccount': automatic && remembered?.id == peer.id
                   ? settings['remoteAccount']
@@ -620,7 +629,10 @@ class LanController extends ChangeNotifier with WidgetsBindingObserver {
       token: token,
       account: account,
       user: lanText(data['user'], 80),
-      sources: lanSources(data['sources']),
+      sources: lanSources(
+        data['sourceOptions'] ?? data['sources'],
+        advertised: true,
+      ),
       autoSync: data['autoSync'] == true,
     );
   }
@@ -702,7 +714,7 @@ class LanController extends ChangeNotifier with WidgetsBindingObserver {
     _notify();
     _urgent?.cancel();
     _urgent = Timer(const Duration(seconds: 1), flush);
-    return {..._config(), 'token': grant['token']};
+    return {..._peerConfig(), 'token': grant['token']};
   }
 
   Future<void> _poll(int run, String generation) async {
@@ -760,7 +772,7 @@ class LanController extends ChangeNotifier with WidgetsBindingObserver {
             _notify();
           }
           result = {
-            ..._config(),
+            ..._peerConfig(),
             'manual': _manual,
             'syncing': syncing,
             'playing': playbackHost?.title ?? '',

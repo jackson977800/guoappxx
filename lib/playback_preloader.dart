@@ -77,8 +77,21 @@ class PlaybackPreloader extends ChangeNotifier {
           return;
         }
         if (plan == null || plan.url.isEmpty) throw AppFailure('未取得预加载结果');
+        var expires = _now().add(const Duration(minutes: 2));
+        if (plan.expiresAt > 0) {
+          final authorizationExpiry = DateTime.fromMillisecondsSinceEpoch(
+            plan.expiresAt,
+          ).subtract(const Duration(seconds: 5));
+          if (authorizationExpiry.isBefore(expires)) {
+            expires = authorizationExpiry;
+          }
+        }
+        if (!expires.isAfter(_now())) {
+          _release(plan);
+          throw AppFailure('下一集播放凭证即将过期');
+        }
         _ready = plan;
-        _expires = _now().add(const Duration(minutes: 2));
+        _expires = expires;
         error = '';
       } catch (failure) {
         if (_closed || ticket != _generation) return;

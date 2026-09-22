@@ -130,6 +130,12 @@ func (d *Downloader) doMediaRequest(request *http.Request) (*http.Response, erro
 
 func (d *Downloader) doMediaRequestWithClient(request *http.Request, client *http.Client) (*http.Response, error) {
 	mediaRequestHeaders(request, request.Header.Get("Referer"))
+	if credentials, _ := request.Context().Value(providerMediaCredentialsKey{}).(*providerMediaCredentials); credentials != nil {
+		if err := credentials.apply(request); err != nil {
+			return nil, err
+		}
+		client = credentials.client(client)
+	}
 	keyRequest := d.isHuangguoVideoURL(request.URL) && strings.HasPrefix(request.URL.Path, "/api/hls_key/")
 	origin := request.URL.Scheme + "://" + request.URL.Host
 	for attempt := 0; attempt < 2; attempt++ {

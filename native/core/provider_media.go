@@ -10,14 +10,15 @@ import (
 )
 
 type providerMedia struct {
-	URL      string
-	Referer  string
-	Duration time.Duration
-	Playlist string
-	HLSKey   []byte
-	CENCKey  []byte
-	Quality  int
-	Variants []providerMedia
+	credentials *providerMediaCredentials
+	URL         string
+	Referer     string
+	Duration    time.Duration
+	Playlist    string
+	HLSKey      []byte
+	CENCKey     []byte
+	Quality     int
+	Variants    []providerMedia
 }
 
 func (d *Downloader) providerBaseURL(source string) string {
@@ -32,6 +33,8 @@ func (d *Downloader) providerBaseURL(source string) string {
 		configured, fallback = d.cfg.HuangdouURL, huangdouBaseURL
 	case sourceHongguo:
 		configured, fallback = d.cfg.HongguoURL, hongguoBaseURL
+	case sourceHuangju:
+		configured, fallback = d.cfg.HuangjuURL, huangjuBaseURL
 	default:
 		fallback = "https://d2pypzndaqisk.cloudfront.net"
 	}
@@ -53,6 +56,8 @@ func providerSourceForURL(raw string) string {
 		return sourceHuangdou
 	case host == "hongguoduanju.com" || host == "www.hongguoduanju.com":
 		return sourceHongguo
+	case host == "huangju.net" || host == "www.huangju.net" || host == "api.huangju.net":
+		return sourceHuangju
 	default:
 		return ""
 	}
@@ -60,7 +65,7 @@ func providerSourceForURL(raw string) string {
 
 func (d *Downloader) providerURLCandidates(raw string) []string {
 	source := providerSourceForURL(raw)
-	if source == "" {
+	if source == "" || source == sourceHuangju {
 		return []string{raw}
 	}
 	parsed, _ := url.Parse(raw)
@@ -95,6 +100,9 @@ func (d *Downloader) resolveProviderMedia(ctx context.Context, task Task) (provi
 	}
 	if chapter.Source == sourceCloudFront {
 		return d.resolveLegacyMedia(ctx, task)
+	}
+	if chapter.Source == sourceHuangju {
+		return d.resolveHuangjuMedia(ctx, task)
 	}
 	if strings.HasPrefix(chapter.VideoURL, "hongguo-cenc://") {
 		return d.resolveHongguoMedia(ctx, task)

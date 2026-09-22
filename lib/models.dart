@@ -7,7 +7,9 @@ class SourceSite {
   final String id;
   final String name;
   final String description;
-  bool get onlineSearch => id == 'hongguo';
+  bool get onlineSearch => id == 'hongguo' || id == 'huangju';
+  bool get pagedSearch => id == 'huangju';
+  bool get searchSuggestions => id == 'hongguo';
   String get groupId => switch (id) {
     'huangguo-video' || 'huangguoai' || 'cloudfront' => 'huangguo',
     _ => id,
@@ -24,6 +26,7 @@ class SourceSite {
   static const knownValues = [
     hongguo,
     SourceSite('huangdou', '黄豆', '精选短剧'),
+    SourceSite('huangju', '黄剧', '热门 · 最新 · 分类短剧'),
     SourceSite('huangguo-video', '黄果视频', '视频剧集'),
     SourceSite('huangguoai', '黄果 AI', 'AI 短剧'),
     SourceSite('cloudfront', '黄果旧版', '旧 API 剧库'),
@@ -255,6 +258,7 @@ class PlaybackPlan {
     this.session = '',
     this.danmakuId = '',
     this.prefetchedBytes = 0,
+    this.expiresAt = 0,
     this.routeIndex = 0,
     this.routeCount = 1,
     this.local = false,
@@ -267,6 +271,7 @@ class PlaybackPlan {
   final String session;
   final String danmakuId;
   final int prefetchedBytes;
+  final int expiresAt;
   final int routeIndex;
   final int routeCount;
   final bool local;
@@ -284,6 +289,7 @@ class PlaybackPlan {
     session: json['session'] as String? ?? '',
     danmakuId: json['danmakuId'] as String? ?? '',
     prefetchedBytes: intValue(json['prefetchedBytes']),
+    expiresAt: intValue(json['expiresAt']),
     routeIndex: intValue(json['routeIndex']),
     routeCount: intValue(json['routeCount']) > 0
         ? intValue(json['routeCount'])
