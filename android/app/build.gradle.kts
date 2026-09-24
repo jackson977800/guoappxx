@@ -31,7 +31,11 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.duanju.duanju_app"
+        // 红果鉴（默认）与真果鉴（--all-sources）需要能装在同一台设备上，
+        // 因此真果鉴使用独立的 applicationId。
+        // 红果鉴保持原值不变，已安装用户仍可正常覆盖升级。
+        // namespace 不变，MainActivity 等组件的类名解析不受影响。
+        applicationId = if (allSources) "com.duanju.duanju_app.zhenguo" else "com.duanju.duanju_app"
         minSdk = 26
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
